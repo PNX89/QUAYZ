@@ -280,3 +280,29 @@ def test_the_workflow_does_not_claim_it_needs_no_credential() -> None:
         "nothing says the signature is published to a public transparency log, which is the "
         "part a reader would want to know is permanent"
     )
+
+
+def test_the_pinned_node_image_reaches_the_clusters_the_evidence_is_measured_on() -> None:
+    """It was passed to an action that creates no cluster, so it pinned nothing.
+
+    `helm/kind-action` with `install_only: true` installs kind and kubectl and stops. The three
+    harnesses each run their own `kind create cluster`, and none of them took an image, so every
+    cluster in this repository's evidence came from kind's compiled-in default while the workflow
+    carried a digest and a comment about why digests matter.
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "install_only: true" in workflow
+    assert "node_image:" not in workflow, (
+        "node_image is passed to an action running with install_only, where it is read by nobody"
+    )
+    image = re.search(r"KIND_NODE_IMAGE: (\S+)", workflow)
+    assert image, "nothing passes a node image to the harnesses, which is where clusters are made"
+    assert "@sha256:" in image.group(1), f"{image.group(1)} is a tag, and a tag can be repointed"
+
+    for harness in sorted((REPO / "scripts").glob("measure_*.sh")):
+        text = harness.read_text(encoding="utf-8")
+        if "kind create cluster" not in text:
+            continue
+        assert "${KIND_NODE_IMAGE:+--image" in text, (
+            f"{harness.name} creates a cluster and ignores the pinned image"
+        )

@@ -46,7 +46,22 @@ def test_every_marker_the_addopts_deselects_is_a_declared_marker() -> None:
         f"declared markers {sorted(declared)} and deselected markers {sorted(deselected)} "
         f"disagree, so a suite is either running where it cannot or hidden where it could"
     )
-    assert declared == {"cluster", "envtest", "container"}
+    # NOT a hardcoded list of names, which is what let this stand. It asserted
+    # {"cluster", "envtest", "container"} and two of those three were used by NO TEST AT ALL, so
+    # the assertion cemented the fiction it was supposed to police. What is checked now is that
+    # every declared marker is actually applied somewhere, which is the property the names were
+    # standing in for.
+    used = set()
+    for path in sorted((REPO / "tests").glob("test_*.py")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("@pytest.mark."):
+                used.add(stripped.removeprefix("@pytest.mark.").split("(")[0].strip())
+    unused = declared - used
+    assert unused == set(), (
+        f"these markers are declared and deselected and no test carries them: {sorted(unused)}. "
+        f"A marker naming a suite that does not exist reads as coverage"
+    )
 
 
 def test_no_third_party_binary_is_committed() -> None:

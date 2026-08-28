@@ -116,10 +116,18 @@ def test_the_harness_never_uses_refresh_false_for_the_real_check() -> None:
     # containing the flag and found four: the one invocation plus three `echo` lines that print
     # it into the transcript so a reader can see what was run. Counting occurrences of a string
     # in a file that also documents that string is a check on the prose, not on the behaviour.
+    # Anything that is not a comment and not an echo. The first version of this counted every
+    # non-comment line containing the flag and found four: the one invocation plus three `echo`
+    # lines that print it into the transcript. The second required the line to START with
+    # `terraform `, which is one syntactic shape out of several the harness already uses: it
+    # calls terraform through a `tf()` helper and across continuation lines, so a flag added at
+    # either of those sites would have been invisible to the guard that exists to find it.
     invocations = [
         line.strip()
         for line in harness.splitlines()
-        if "-refresh=false" in line and line.strip().startswith("terraform ")
+        if "-refresh=false" in line
+        and not line.strip().startswith("#")
+        and not line.strip().startswith("echo ")
     ]
     assert len(invocations) == 1, (
         f"-refresh=false is passed to terraform on {len(invocations)} lines. It belongs only in "
