@@ -47,6 +47,14 @@ jobs:
       - run: go build ./...
       - name: the unit suite, against the fake clientset
         run: go test -race ./...
+      - name: fetch a real control plane, once
+        run: go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use
+      - name: resourceVersion resumption, against a real kube-apiserver
+        # Behind a build tag because it needs 167 MB of kube-apiserver and etcd that a stranger
+        # cloning this repository has not got. `go test ./...` stays useful for them.
+        run: |
+          KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path) \
+            go test -tags envtest -v ./resume/...
 
   # A real Kubernetes cluster, created and destroyed by the job. Every failure in
   # src/quayz/failures.py is produced against it and read off it.
