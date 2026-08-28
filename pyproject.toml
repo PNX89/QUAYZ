@@ -47,5 +47,10 @@ filterwarnings = ["error"]
 [tool.mypy]
 # scripts joins this list as soon as it holds Python. Naming a directory mypy cannot find is
 # an error rather than a no-op, so it is added with its first file rather than in advance.
-files = ["src", "tests"]
+# scripts is here too, and it was not. The two scripts CI and the README depend on were the
+# only Python in the repository nothing type checked, and the tests that import them could not
+# resolve the module either. `mypy_path` is what makes `from readme_block import block` mean the
+# same thing to mypy that it means to pytest.
+files = ["src", "tests", "scripts", "examples"]
+mypy_path = ["scripts"]
 strict = true
