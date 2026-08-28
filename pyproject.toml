@@ -30,17 +30,17 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Three markers, all DESELECTED by default rather than skipped, because a skipped test reports
-# as a pass and nobody reads it. Every one of them needs something installed that a stranger
-# cloning this will not have.
-#   cluster:   needs a kind cluster, which the test run creates and destroys
-#   envtest:   needs the controller-runtime control plane binaries, fetched once
-#   container: needs a Docker runtime for a real image build
-addopts = "-q -m 'not cluster and not envtest and not container'"
+# ONE marker, DESELECTED by default rather than skipped, because a skipped test reports as a
+# pass and nobody reads it. It needs kind, kubectl and helm, which a stranger cloning this will
+# not have, and the CI job that does have them selects it explicitly.
+#
+# There were three. `envtest` and `container` had NO TESTS AT ALL: the envtest suite is Go and
+# runs under `go test -tags envtest`, and the container work is a build that happens in CI. Two
+# marker names describing a rig that does not exist read as coverage, which is why they are
+# gone rather than left as documentation of an intention.
+addopts = "-q -m 'not cluster'"
 markers = [
-    "cluster: needs a kind cluster. Run with -m cluster.",
-    "envtest: needs kube-apiserver and etcd from setup-envtest. Run with -m envtest.",
-    "container: needs a Docker runtime. Run with -m container.",
+    "cluster: needs kind, kubectl and helm. Creates a cluster and destroys it. Run with -m cluster.",
 ]
 filterwarnings = ["error"]
 

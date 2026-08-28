@@ -31,7 +31,14 @@ trap cleanup EXIT
 
 echo "==> creating cluster $CLUSTER"
 kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
-kind create cluster --name "$CLUSTER" --wait 180s >/dev/null
+# THE NODE IMAGE, WHICH THE WORKFLOW PINS BY DIGEST AND WHICH NEVER REACHED A CLUSTER. The CI
+# job passed node_image to helm/kind-action alongside install_only: true, and install_only means
+# the action installs the binaries and creates nothing, so the pin was decorative: every cluster
+# any evidence here was measured on came from `kind create cluster` with no image at all. Kind's
+# own default is digest pinned in its source, so nothing was unsafe, but the workflow said it was
+# pinning something it was not. Empty is kind's default, which is what a reader gets on a laptop.
+kind create cluster --name "$CLUSTER" ${KIND_NODE_IMAGE:+--image "$KIND_NODE_IMAGE"} \
+  --wait 180s >/dev/null
 CONTEXT="kind-$CLUSTER"
 h() { helm --kube-context "$CONTEXT" "$@"; }
 k() { kubectl --context "$CONTEXT" "$@"; }
