@@ -229,6 +229,40 @@ jobs:
           docker run --rm -v "$PWD:/work" -w /work quayz-toolbox:ci \
             terraform -chdir=terraform/cluster fmt -check -recursive
 
+      - name: and the chart refuses the values that used to render
+        # FIVE MEASURED HOLES, ALL OF WHICH `helm lint` REPORTED AS "0 chart(s) failed". Asserted
+        # as REFUSALS, because a gate that only proves the good path renders is the gate that let
+        # every one of them through. The schema is Helm's to enforce, so this is the only place
+        # it can be proved: tests/test_chart_values.py checks the schema and the chart cannot
+        # drift apart, and this checks that helm actually acts on it.
+        run: |
+          set -eu
+          helm_in_the_box() {
+            docker run --rm -v "$PWD:/work" -w /work quayz-toolbox:ci \
+              helm template canary charts/deploy-canary "$@"
+          }
+          refuses() {
+            if helm_in_the_box "$@" >/dev/null 2>&1; then
+              echo "the chart accepted $* and it should not have" >&2
+              exit 1
+            fi
+            echo "refused: $*"
+          }
+          # "false" is a non-empty string, and a non-empty string is truthy in a Go template.
+          refuses --set-string failure.crashLoop=false
+          # The wrong case asked for nothing and installed a healthy pod, with no warning.
+          refuses --set failure.crashloop=true
+          # `y` is a YAML 1.1 boolean and the API server's decoder rejects the whole object.
+          refuses --set image.pullPolicy=y
+          # An unconstrained string rendered busybox@notadigest.
+          refuses --set image.digest=notadigest
+          # The crash loop exits before the allocation starts, so the OOMKill never happens.
+          refuses --set failure.crashLoop=true --set failure.outOfMemory=true
+          for switch in neverReady crashLoop outOfMemory; do
+            helm_in_the_box --set "failure.$switch=true" >/dev/null
+            echo "renders: failure.$switch=true"
+          done
+
       - name: it runs as somebody other than root
         run: |
           who=$(docker run --rm quayz-toolbox:ci id -un)
