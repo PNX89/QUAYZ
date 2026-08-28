@@ -1,0 +1,54 @@
+# Defaults chosen so `helm template` with no overrides renders something valid and installable.
+# Every value that decides a FAILURE MODE is here, because the point of this chart is being able
+# to ask for each failure by name rather than by editing a template.
+
+# busybox rather than a purpose-built test image, deliberately. Every failure in this chart is
+# produced by a shell line a reader can see in the template, not by a flag whose behaviour they
+# would have to look up. The chart is the explanation.
+image:
+  repository: busybox
+  tag: "1.37"
+  # Pinned by digest as well as by tag. The tag is for a reader, the digest is what runs.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+# THE THREE SWITCHES THIS CHART EXISTS FOR. Each produces one of the failures named in
+# src/quayz/failures.py, and each is off by default so the chart deploys healthily.
+failure:
+  # Never becomes ready. The process runs, the liveness probe passes, and readiness never does.
+  # This is the only failure a dashboard can show green.
+  neverReady: false
+  # Exits non-zero shortly after starting. CrashLoopBackOff with reason Error.
+  crashLoop: false
+  # Allocates past its memory limit. CrashLoopBackOff with reason OOMKilled and exit code 137,
+  # which looks identical to the line above in `kubectl get pods`.
+  outOfMemory: false
+
+# Deliberately small, because the OOM case needs a limit a container can actually reach in a
+# test. A generous limit would make that failure take minutes or never arrive.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi
+
+# THE TWO PROBES ARE DIFFERENT ON PURPOSE AND THE DIFFERENCE IS THE SUBJECT.
+#
+# Liveness asks "is this process wedged", and its answer restarts the container. Readiness asks
+# "should traffic go here", and its answer only adds or removes an endpoint. Setting them to the
+# same check is the common mistake: a slow dependency then restarts a process that was working.
+probes:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 2
+    periodSeconds: 5
+    failureThreshold: 6
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 1
+    periodSeconds: 2
+    failureThreshold: 2

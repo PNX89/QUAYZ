@@ -1,0 +1,84 @@
+{{- /*
+The workload. Its command is written out in full rather than baked into an image, because the
+whole subject of this chart is what a failing deploy looks like and an explanation you have to
+go and read somewhere else is not one.
+
+THE COMMAND, IN ORDER:
+  1. If crashLoop is asked for, exit 1 after two seconds. That is reason=Error, exit code 1.
+  2. If outOfMemory is asked for, `tail /dev/zero`, which reads an endless stream into memory
+     until the cgroup limit is reached. That is reason=OOMKilled, exit code 137. Lines 1 and 2
+     produce the SAME CrashLoopBackOff and the same climbing restart count.
+  3. Otherwise serve HTTP, and touch the readiness file unless neverReady is asked for.
+
+THE TWO PROBES USE DIFFERENT MECHANISMS ON PURPOSE. Liveness is an HTTP GET against the server:
+it answers "is this process wedged", and its answer RESTARTS the container. Readiness is an exec
+that looks for a file: it answers "should traffic go here", and its answer only adds or removes
+an endpoint. Pointing both at the same check is the common mistake, and it turns a slow
+dependency into a restart loop of a process that was working.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "deploy-canary.name" . }}
+  labels:
+    {{- include "deploy-canary.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "deploy-canary.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "deploy-canary.labels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: canary
+          image: {{ include "deploy-canary.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              {{- if .Values.failure.crashLoop }}
+              # Asked for: exit non-zero shortly after starting.
+              sleep 2
+              echo "exiting on purpose" >&2
+              exit 1
+              {{- end }}
+              {{- if .Values.failure.outOfMemory }}
+              # Asked for: read an endless stream into memory until the cgroup limit is hit.
+              # The logs of this container end mid-sentence with nothing wrong in them, which is
+              # the entire reason a log-based detector cannot see an OOMKill.
+              echo "allocating"
+              tail /dev/zero
+              {{- end }}
+              mkdir -p /www
+              echo "canary {{ .Chart.AppVersion }}" > /www/index.html
+              {{- if not .Values.failure.neverReady }}
+              # Ready after a moment. With neverReady set, this file is never created, the
+              # readiness exec never passes, and the pod stays out of the Service while
+              # `kubectl get pods` reports Running with a restart count of zero.
+              ( sleep 3 && touch /tmp/ready ) &
+              {{- end }}
+              exec httpd -f -p 8080 -h /www
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "test -f /tmp/ready"]
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

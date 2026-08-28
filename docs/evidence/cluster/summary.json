@@ -1,0 +1,17 @@
+{
+  "healthy_endpoints_ready": 2,
+  "healthy_endpoints_not_ready": 0,
+
+  "never_ready_restart_count": 0,
+  "never_ready_endpoints_ready": 0,
+  "never_ready_endpoints_not_ready": 2,
+  "never_ready_addresses_in_the_wide_column": 2,
+
+  "crash_loop_reason": "Error",
+  "crash_loop_exit_code": 1,
+  "crash_loop_log_lines": 1,
+
+  "oom_reason": "OOMKilled",
+  "oom_exit_code": 137,
+  "oom_log_lines_mentioning_a_problem": 0
+}
