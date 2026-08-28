@@ -1,19 +1,69 @@
 """The taxonomy, checked for the property that makes it worth having.
 
 A list of ways a deploy can fail is easy to write and proves nothing. The claim here is sharper:
-that some of them are indistinguishable by the instrument people reach for first, and that the
-one field which separates them is named. These tests check that claim rather than the list.
+that some of them are indistinguishable by the instrument people reach for first, that the one
+field which separates them is named, and that every one of those claims is a reading taken off a
+real cluster rather than a sentence somebody was confident about.
+
+THE JOIN IS THE POINT OF THIS FILE. Every entry in DETECTORS is checked against
+`docs/evidence/cluster/summary.json`, which records the same six instruments pointed at all five
+failures and at a healthy control. Before that join existed, three of the six entries were wrong,
+and every one of them was wrong in the direction that flattered the taxonomy:
+
+  lastState.terminated.reason was credited with the image pull, which has no terminated state
+  EndpointSlice readiness was credited with identifying one failure, and it reads zero for four
+  pod phase was said to separate nothing, and it is the only instrument that finds the image pull
+
+The first of those was load bearing: it was the ONLY entry naming the image pull, so the test
+asserting every failure had an answer was green because of a false one.
 """
 
 from __future__ import annotations
 
+import json
+import pathlib
+from typing import Any
+
 import pytest
 
-from quayz.failures import DETECTORS, FAILURES, Failure, confusable_with
+from quayz.failures import DETECTORS, FAILURES, Detector, Failure, confusable_with
+
+EVIDENCE = pathlib.Path(__file__).resolve().parents[1] / "docs" / "evidence" / "cluster"
+
+#: The failures produced by scripts/measure_failures.sh, against which the instrument claims are
+#: checked. `changed by hand afterwards` is not here: it is produced by scripts/measure_drift.sh
+#: against a healthy cluster and is measured by test_drift.py instead.
+MEASURED_ON_A_CLUSTER = (
+    "image cannot be pulled",
+    "crash loop",
+    "killed for memory",
+    "alive but never ready",
+)
+
+#: Every detector that names the columns it reads is joined to the matrix. Derived from the
+#: table rather than listed here, so an entry cannot be added and silently go unchecked: the
+#: hand-written version of this dictionary was one name away from exactly that.
+JOINED = [entry for entry in DETECTORS if entry.fields]
+UNJOINED = [entry for entry in DETECTORS if not entry.fields]
+
+
+def reading(entry: Detector, case: dict[str, Any]) -> tuple[Any, ...]:
+    """What one instrument reads on one case, as the tuple of columns it names."""
+    return tuple(case[field] for field in entry.fields)
+
+
+def cases() -> dict[str, dict[str, Any]]:
+    loaded: dict[str, Any] = json.loads((EVIDENCE / "summary.json").read_text(encoding="utf-8"))
+    found: dict[str, dict[str, Any]] = loaded["cases"]
+    return found
 
 
 def by_name(name: str) -> Failure:
     return next(failure for failure in FAILURES if failure.name == name)
+
+
+def detector(name: str) -> Detector:
+    return next(entry for entry in DETECTORS if entry.name == name)
 
 
 def test_every_failure_is_here_and_the_count_is_asserted() -> None:
@@ -32,6 +82,14 @@ def test_every_failure_is_here_and_the_count_is_asserted() -> None:
     assert len(FAILURES) == 5
 
 
+def test_every_failure_the_harness_produces_is_in_the_taxonomy_by_the_same_name() -> None:
+    """The join, both ways. A name that matches nothing compares nothing and reports success."""
+    measured = set(cases()) - {"healthy"}
+    named = {failure.name for failure in FAILURES}
+    assert measured <= named, f"the cluster produced {measured - named}, which nothing names"
+    assert set(MEASURED_ON_A_CLUSTER) == measured
+
+
 def test_a_crash_loop_and_an_oomkill_are_indistinguishable_by_symptom() -> None:
     """The argument. If these two ever stop colliding, this repository has less to say.
 
@@ -41,6 +99,16 @@ def test_a_crash_loop_and_an_oomkill_are_indistinguishable_by_symptom() -> None:
     assert by_name("crash loop").presents_as == by_name("killed for memory").presents_as
     assert confusable_with("crash loop") == ("killed for memory",)
     assert confusable_with("killed for memory") == ("crash loop",)
+
+
+def test_the_symptom_they_share_is_the_one_the_cluster_produced() -> None:
+    """Otherwise `presents_as` is two strings that agree with each other and with nothing else."""
+    crash = cases()["crash loop"]
+    oom = cases()["killed for memory"]
+    assert crash["waiting_reason"] == oom["waiting_reason"] == "CrashLoopBackOff"
+    assert crash["restarted"] is True and oom["restarted"] is True
+    assert "CrashLoopBackOff" in by_name("crash loop").presents_as
+    assert "CrashLoopBackOff" in by_name("killed for memory").presents_as
 
 
 def test_confusability_is_symmetric() -> None:
@@ -57,6 +125,47 @@ def test_confusability_is_symmetric() -> None:
             )
 
 
+@pytest.mark.parametrize("entry", JOINED, ids=lambda e: e.name)
+def test_each_instrument_notices_exactly_what_the_cluster_says_it_notices(entry: Detector) -> None:
+    """The join, and the reason three entries in this table were wrong.
+
+    An instrument NOTICES a failure when its reading differs from the reading it takes on the
+    healthy control. That is the whole definition, applied to the recorded matrix, and nothing
+    here is a judgement about what an instrument ought to be able to see.
+    """
+    healthy = reading(entry, cases()["healthy"])
+    noticed = {name for name in MEASURED_ON_A_CLUSTER if reading(entry, cases()[name]) != healthy}
+    assert noticed == set(entry.notices), (
+        f"{entry.name} is recorded as noticing {sorted(entry.notices)} and the cluster says "
+        f"{sorted(noticed)}"
+    )
+
+
+@pytest.mark.parametrize("entry", JOINED, ids=lambda e: e.name)
+def test_each_instrument_separates_exactly_what_the_cluster_says_it_separates(
+    entry: Detector,
+) -> None:
+    """SEPARATING IS NOT NOTICING, and conflating them is how this table came to flatter itself.
+
+    An instrument separates a failure when, among the ones it notices, that one's reading is its
+    own. The restart count is the interesting exception: it notices two and reads 2 and 3, which
+    are different numbers and not different kinds, so it separates neither. The comparison below
+    would call those separated, so that entry is handled on its own terms and the reasoning
+    lives in its `measured` field rather than in a special case nobody reads.
+    """
+    if entry.name == "restart count":
+        assert entry.separates == ()
+        assert "how long the harness waited" in entry.measured
+        return
+
+    readings = {name: reading(entry, cases()[name]) for name in entry.notices}
+    unique = {name for name, value in readings.items() if list(readings.values()).count(value) == 1}
+    assert unique == set(entry.separates), (
+        f"{entry.name} is recorded as separating {sorted(entry.separates)} and its readings "
+        f"{readings} separate {sorted(unique)}"
+    )
+
+
 def test_the_instrument_people_reach_for_first_cannot_separate_the_pair() -> None:
     """Restart count sees both and tells you nothing about which.
 
@@ -64,15 +173,16 @@ def test_the_instrument_people_reach_for_first_cannot_separate_the_pair() -> Non
     rather than left in prose: the detector covers both members of a confusable pair, which
     means it FIRES on both and SEPARATES neither.
     """
-    covered = DETECTORS["restart count"]
-    assert "crash loop" in covered and "killed for memory" in covered
-    assert set(covered) == set(confusable_with("crash loop")) | {"crash loop"}
+    restarts = detector("restart count")
+    assert set(restarts.notices) == {"crash loop", "killed for memory"}
+    assert restarts.separates == ()
+    assert set(restarts.notices) == set(confusable_with("crash loop")) | {"crash loop"}
 
 
 def test_one_named_field_does_separate_them() -> None:
     """And it is a field, not a heuristic, so a test can read it off a live pod."""
-    reason = DETECTORS["lastState.terminated.reason"]
-    assert "crash loop" in reason and "killed for memory" in reason
+    reason = detector("lastState.terminated.reason with exitCode")
+    assert set(reason.separates) == {"crash loop", "killed for memory"}
 
     oom = by_name("killed for memory")
     assert "OOMKilled" in oom.told_apart_by
@@ -81,42 +191,163 @@ def test_one_named_field_does_separate_them() -> None:
     )
 
 
+def test_the_field_that_separates_the_pair_is_blank_for_two_other_failures() -> None:
+    """The correction. It was credited with finding the image pull, which never terminates.
+
+    A field that is empty cannot be the field a failure is told apart by, and this one is empty
+    for two of the five: the image that never pulled, and the pod that is alive and never ready.
+    """
+    reason = detector("lastState.terminated.reason with exitCode")
+    assert "image cannot be pulled" not in reason.notices
+    assert "alive but never ready" not in reason.notices
+    for name in ("image cannot be pulled", "alive but never ready"):
+        assert cases()[name]["terminated_reason"] is None
+        assert cases()[name]["exit_code"] is None
+
+
 def test_logs_cannot_see_an_oomkill_at_all() -> None:
     """The trap that makes a log-based detector worse than useless here.
 
     The kernel takes the process away, so the logs end mid-sentence with nothing wrong in them.
     A detector reading logs reports health for a container that was killed.
     """
-    assert "killed for memory" not in DETECTORS["container logs"]
+    logs = detector("container logs")
+    assert "killed for memory" not in logs.notices
     assert "mid-sentence" in by_name("killed for memory").why_the_obvious_check_fails
+
+    numbers = json.loads((EVIDENCE / "summary.json").read_text(encoding="utf-8"))
+    assert numbers["oom_log_lines_mentioning_a_problem"] == 0
+    assert numbers["crash_loop_log_lines"] >= 1
 
 
 def test_the_only_failure_a_dashboard_shows_green_is_named_as_such() -> None:
     """Alive but never ready is the one that passes every health check and serves nothing."""
     never_ready = by_name("alive but never ready")
     assert never_ready.presents_as == "Running with restart count zero"
-    assert "EndpointSlice" in never_ready.told_apart_by
     assert "green" in never_ready.why_the_obvious_check_fails
 
 
-def test_pod_phase_separates_nothing_and_says_so() -> None:
-    """An empty entry rather than a missing one, because absent reads as "not considered"."""
-    assert DETECTORS["pod phase"] == ()
+def test_the_failure_a_dashboard_shows_green_is_found_by_elimination_and_says_so() -> None:
+    """The second correction, and the most flattering one.
+
+    EndpointSlice readiness was named as this failure's distinguishing instrument, as if it
+    identified it. It reads zero endpoints ready for all four failures on the cluster, so what
+    it identifies is a Service that is not serving. This failure is the one with no positive
+    evidence anywhere, which is exactly why it is the dangerous one, and the entry says so.
+    """
+    endpoints = detector("EndpointSlice readiness")
+    assert len(endpoints.notices) == 4
+    assert endpoints.separates == ()
+
+    never_ready = cases()["alive but never ready"]
+    assert never_ready["restarted"] is False
+    assert never_ready["terminated_reason"] is None
+    assert never_ready["waiting_reason"] is None
+    assert never_ready["phase"] == "Running"
+    assert "ELIMINATION" in by_name("alive but never ready").told_apart_by
+
+
+def test_pod_phase_separates_the_one_failure_nothing_else_can_find_alone() -> None:
+    """The third correction. This entry was empty, and empty was written down on purpose.
+
+    The comment said an empty tuple was better than a missing one because absent reads as "not
+    considered". It was considered, and the answer was wrong: Pending against Running is the
+    only reading that names the image pull without reading anything else.
+    """
+    phase = detector("pod phase")
+    assert phase.notices == ("image cannot be pulled",)
+    assert phase.separates == ("image cannot be pulled",)
+    assert cases()["image cannot be pulled"]["phase"] == "Pending"
+    assert {cases()[name]["phase"] for name in cases() if name != "image cannot be pulled"} == {
+        "Running"
+    }
+
+
+def test_a_plan_over_a_helm_release_is_recorded_as_finding_nothing() -> None:
+    """The drift finding, in the same table as everything else rather than only in an ADR.
+
+    A detector with an empty `notices` looks like an oversight and is the measurement: the plan
+    exited 0 against a Deployment hand-scaled from two replicas to five, because the resource
+    compares the chart and its values and neither had changed.
+    """
+    plan = detector("terraform plan over a helm_release")
+    assert plan.notices == ()
+    assert "exit 0" in plan.measured
+
+    drift = json.loads((EVIDENCE.parent / "drift" / "summary.json").read_text(encoding="utf-8"))
+    assert drift["after_hand_edit_terraform_plan_exit"] == 0
+    assert drift["after_hand_edit_kubectl_diff_exit"] != 0
 
 
 def test_every_detector_names_failures_that_exist() -> None:
     """A detector claiming to catch something not in the taxonomy is a stale entry."""
     names = {failure.name for failure in FAILURES}
-    for detector, caught in DETECTORS.items():
-        unknown = set(caught) - names
-        assert unknown == set(), f"{detector} claims to catch {unknown}, which is not a failure"
+    for entry in DETECTORS:
+        unknown = (set(entry.notices) | set(entry.separates)) - names
+        assert unknown == set(), f"{entry.name} claims {unknown}, which is not a failure"
 
 
-def test_every_failure_is_caught_by_at_least_one_detector() -> None:
-    """Otherwise the taxonomy names a problem with no answer, which is a gap rather than a list."""
-    caught = {name for names in DETECTORS.values() for name in names}
-    missing = {failure.name for failure in FAILURES} - caught
-    assert missing == set(), f"no detector here catches {missing}"
+def test_nothing_is_recorded_as_separated_without_being_noticed() -> None:
+    """An instrument cannot tell apart a failure it does not see at all."""
+    for entry in DETECTORS:
+        assert set(entry.separates) <= set(entry.notices), (
+            f"{entry.name} separates {set(entry.separates) - set(entry.notices)} without "
+            f"noticing it"
+        )
+
+
+def test_the_three_unjoined_instruments_are_the_three_that_cannot_be_joined() -> None:
+    """An entry with no columns is unchecked, so which ones they are is asserted rather than left.
+
+    Two of them need a cluster somebody has edited by hand, which a different harness produces
+    and test_drift.py checks. The third reads container logs, which the matrix counts for two
+    cases rather than tabulating for five, and which test_logs_cannot_see_an_oomkill_at_all
+    checks against those counts.
+    """
+    assert {entry.name for entry in UNJOINED} == {
+        "container logs",
+        "terraform plan over a helm_release",
+        "the declared objects against the live ones",
+    }
+
+
+def test_no_single_field_finds_the_failure_a_dashboard_shows_green() -> None:
+    """The sharpest thing this taxonomy has to say, and it was not being said.
+
+    Every other failure is named by one field. This one is not: its row differs from the healthy
+    control in exactly one column, endpoints ready, and that column reads identically for all
+    four failures. So the only entry that separates it is the one that reads every instrument
+    and finds only one of them abnormal, which is what the controller does when it falls through
+    every branch and lands on never-ready.
+    """
+    single_field = [entry for entry in DETECTORS if len(entry.fields) == 1]
+    assert single_field, "nothing here reads a single column, so this proves nothing"
+    for entry in single_field:
+        assert "alive but never ready" not in entry.separates, (
+            f"{entry.name} now names it on its own, which is a better world and a different "
+            f"claim: rewrite the entry rather than deleting this test"
+        )
+    combined = detector("every instrument at once, read together")
+    assert "alive but never ready" in combined.separates
+
+
+def test_every_failure_is_separated_by_at_least_one_instrument() -> None:
+    """Stronger than the test this replaces, which asked only that something NOTICED each one.
+
+    That weaker question was answered yes for the image pull by a false entry: the only detector
+    naming it was the one field it is guaranteed not to appear on. Noticing is not an answer. A
+    failure nothing can tell apart from another failure is a gap, and this asks for the
+    instrument that names it.
+    """
+    separated = {name for entry in DETECTORS for name in entry.separates}
+    missing = {failure.name for failure in FAILURES} - separated
+    assert missing == set(), f"nothing here tells {missing} apart from anything else"
+
+
+@pytest.mark.parametrize("entry", DETECTORS, ids=lambda e: e.name)
+def test_every_instrument_says_what_it_actually_read(entry: Detector) -> None:
+    """A table of opinions is the thing this file exists to stop being."""
+    assert len(entry.measured) > 60, entry.name
 
 
 @pytest.mark.parametrize("failure", FAILURES, ids=lambda f: f.name)
