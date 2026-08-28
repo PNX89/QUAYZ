@@ -1,0 +1,16 @@
+$ terraform plan -detailed-exitcode                  # against a cluster that is gone
+$ terraform plan -detailed-exitcode -refresh=false   # the same, made fast
+
+--- with a refresh, exit 2 ---
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+─────────────────────────────────────────────────────────────────────────────
+
+Note: You didn't use the -out option to save this plan, so Terraform can't
+guarantee to take exactly these actions if you run "terraform apply" now.
+
+--- WITH -refresh=false, exit 0 ---
+No changes. Your infrastructure matches the configuration.
+
+That is the trap. The flag everybody adds to make a drift check fast turns a cluster
+that no longer exists into a clean bill of health. -refresh=false is never used here.

@@ -1,0 +1,21 @@
+$ kubectl scale deployment canary-canary --replicas=5
+$ terraform plan -detailed-exitcode
+$ helm get values canary | helm template | kubectl diff -f -
+
+the deployment is now running 5 replicas against 2 declared.
+
+--- terraform plan -detailed-exitcode, exit 0 ---
+helm_release.canary: Refreshing state... [id=canary]
+
+No changes. Your infrastructure matches the configuration.
+
+Terraform has compared your real infrastructure against your configuration
+and found no differences, so no changes are needed.
+
+--- kubectl diff against the rendered chart, exit 1 ---
+-  replicas: 5
++  replicas: 2
+
+helm_release compares the chart and its values. The values did not change; the cluster
+did. That is not a bug in the provider, it is the boundary of what the resource models,
+and a drift detector built on it alone cannot see the drift it exists to catch.

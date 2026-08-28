@@ -1,0 +1,11 @@
+{
+  "baseline_terraform_plan_exit": 0,
+  "baseline_kubectl_diff_exit": 0,
+
+  "hand_scaled_to": 5,
+  "after_hand_edit_terraform_plan_exit": 0,
+  "after_hand_edit_kubectl_diff_exit": 1,
+
+  "unreachable_cluster_plan_exit": 2,
+  "unreachable_cluster_plan_exit_with_refresh_false": 0
+}
