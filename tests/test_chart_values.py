@@ -40,7 +40,10 @@ def schema() -> dict[str, Any]:
 
 
 def rendered_templates() -> str:
-    return "\n".join(path.read_text(encoding="utf-8") for path in sorted(TEMPLATES.glob("*.yaml")))
+    """Both suffixes. The image helper lives in _helpers.tpl, and globbing *.yaml alone made a
+    value that IS read look unread, which is the exact failure these tests are here to catch."""
+    files = sorted(TEMPLATES.glob("*.yaml")) + sorted(TEMPLATES.glob("*.tpl"))
+    return "\n".join(path.read_text(encoding="utf-8") for path in files)
 
 
 def paths(node: Any, prefix: str = "") -> set[str]:
@@ -88,7 +91,7 @@ def test_the_schema_constrains_nothing_the_chart_does_not_have() -> None:
 def test_the_three_switches_are_declared_boolean_and_nothing_else() -> None:
     """The whole reason the schema was added: "false" is a non-empty string and truthy."""
     switches = SCHEMA["properties"]["failure"]["properties"]
-    assert set(switches) == {"neverReady", "crashLoop", "outOfMemory"}
+    assert set(switches) == {"neverReady", "crashLoop", "outOfMemory", "badImage"}
     for name, rule in switches.items():
         assert rule["type"] == "boolean", f"{name} is declared {rule['type']}"
     assert SCHEMA["properties"]["failure"]["additionalProperties"] is False, (
@@ -134,6 +137,13 @@ def test_the_pull_policy_renders_quoted() -> None:
     assert "imagePullPolicy: {{ .Values.image.pullPolicy | quote }}" in rendered_templates()
 
 
+def test_every_failure_switch_is_read_by_a_template() -> None:
+    """A switch nothing reads is a switch that silently does nothing when it is set."""
+    text = rendered_templates()
+    for switch in values()["failure"]:
+        assert f".Values.failure.{switch}" in text, f"failure.{switch} is read by no template"
+
+
 def test_every_probe_value_the_file_declares_is_read_by_a_template() -> None:
     """values.yaml advertised /healthz and /readyz while the template asked for neither."""
     text = rendered_templates()
@@ -141,10 +151,18 @@ def test_every_probe_value_the_file_declares_is_read_by_a_template() -> None:
         assert f".Values.{path}" in text, f"{path} is documented in values.yaml and read by nothing"
 
 
-def test_asking_for_a_crash_loop_and_an_oomkill_at_once_is_refused() -> None:
-    """Both blocks rendered, and the crash loop exits before the allocation ever starts."""
+def test_asking_for_two_failures_at_once_is_refused() -> None:
+    """The switches are not independent, and the guard counts rather than naming a pair.
+
+    A crash loop exits before an allocation starts or a readiness file is written, and a
+    container whose image never pulled can do none of the three. Whichever switch wins, the
+    caller measures a failure they did not ask for, so every combination is refused and not
+    only the pair somebody happened to think of.
+    """
     text = rendered_templates()
-    assert "and .Values.failure.crashLoop .Values.failure.outOfMemory" in text
+    assert "range $name, $on := .Values.failure" in text, (
+        "the guard names specific switches, so a combination nobody listed renders silently"
+    )
     assert "fail " in text, "the guard has to stop the render, not warn in a comment"
 
 

@@ -26,8 +26,12 @@ image:
 
 replicaCount: 2
 
-# THE THREE SWITCHES THIS CHART EXISTS FOR. Each produces one of the failures named in
+# THE FOUR SWITCHES THIS CHART EXISTS FOR. Each produces one of the failures named in
 # src/quayz/failures.py, and each is off by default so the chart deploys healthily.
+#
+# AT MOST ONE AT A TIME, and the template refuses two. They are not independent: a crash loop
+# exits before an allocation starts, and a container whose image never pulled cannot do either.
+# Two switches produce one failure and a caller who believes they measured the other.
 failure:
   # Never becomes ready. The process runs, the liveness probe passes, and readiness never does.
   # This is the only failure a dashboard can show green.
@@ -37,6 +41,11 @@ failure:
   # Allocates past its memory limit. CrashLoopBackOff with reason OOMKilled and exit code 137,
   # which looks identical to the line above in `kubectl get pods`.
   outOfMemory: false
+  # Asks for a tag that does not exist, so the pull fails and nothing ever runs. Added because
+  # the taxonomy named this failure and the chart had no way to produce it: the CI job called
+  # "every failure, on a cluster made and destroyed here" was measuring four of five, and the
+  # one it skipped is the one whose evidence lives on a different field from all the others.
+  badImage: false
 
 # Deliberately small, because the OOM case needs a limit a container can actually reach in a
 # test. A generous limit would make that failure take minutes or never arrive.

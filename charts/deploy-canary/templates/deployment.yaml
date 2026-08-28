@@ -21,9 +21,17 @@ outOfMemory set, both blocks used to render and the second was dead code: the sh
 seconds in and never reaches `tail /dev/zero`. The run produced reason=Error, the caller had
 asked for an OOMKill, and nothing said so. A refusal at render time is the only place that is
 catchable without a cluster.
+
+The guard counts rather than naming a pair, because every combination has the same shape: a
+container whose image never pulled cannot crash loop, and a crash loop exits before it can fail
+to become ready. Whichever switch wins, the caller measures a failure they did not ask for.
 */ -}}
-{{- if and .Values.failure.crashLoop .Values.failure.outOfMemory -}}
-{{- fail "failure.crashLoop and failure.outOfMemory cannot both be set: the crash loop exits before the allocation starts, so the OOMKill you asked for would never happen and the pod would report reason=Error. Ask for one at a time." -}}
+{{- $asked := list -}}
+{{- range $name, $on := .Values.failure -}}
+{{- if $on -}}{{- $asked = append $asked $name -}}{{- end -}}
+{{- end -}}
+{{- if gt (len $asked) 1 -}}
+{{- fail (printf "%v were all asked for, and this chart produces one failure at a time. They are not independent: a container whose image never pulled cannot crash loop, and a crash loop exits before an allocation starts or a readiness file is written. Whichever one wins, the run measures a failure nobody asked for." $asked) -}}
 {{- end -}}
 apiVersion: apps/v1
 kind: Deployment
