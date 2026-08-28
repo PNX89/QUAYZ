@@ -56,5 +56,9 @@ jobs:
         run: scripts/measure_failures.sh quayz-ci
       - name: fail if any measured outcome has changed
         run: git diff --exit-code -- docs/evidence/cluster/summary.json
+      - name: break a deploy twice and recover it two ways
+        run: scripts/measure_rollback.sh quayz-ci-rollback
+      - name: fail if any recovery outcome has changed
+        run: git diff --exit-code -- docs/evidence/rollback/summary.json
       - name: the offline half, against what was just recorded
-        run: uv run pytest tests/test_cluster_failures.py
+        run: uv run pytest tests/test_cluster_failures.py tests/test_rollback.py
