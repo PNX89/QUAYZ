@@ -1,0 +1,19 @@
+$ helm install canary charts/deploy-canary --set failure.outOfMemory=true
+# failure: killed for memory
+
+--- kubectl get pods ---
+canary-canary-6887fdf9fd-kw9kv   0/1   CrashLoopBackOff   3 (7s ago)   45s
+
+--- the field that separates them ---
+restartCount lastState.terminated.reason exitCode
+3 OOMKilled 137
+
+--- kubectl logs, in full ---
+allocating
+
+--- EndpointSlice conditions ---
+ready notready
+0 1
+
+--- and the WIDE output of the same EndpointSlice, which must not be trusted ---
+canary-canary-jvkhs   IPv4   8080   10.244.0.10   45s

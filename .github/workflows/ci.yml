@@ -2,10 +2,10 @@ name: CI
 
 # Nothing here reaches a cloud account and nothing here needs a credential.
 #
-# The jobs arrive as the legs do. This one runs the offline suite, which is everything a
-# stranger gets by cloning the repository and running pytest with nothing else installed. The
-# cluster, envtest and container suites are deselected by default and get their own jobs, so the
-# boundary of the test rig stays legible rather than being blurred into one green tick.
+# The jobs arrive as the legs do. `checks` runs the offline suite, which is everything a stranger
+# gets by cloning the repository and running pytest with nothing else installed. The cluster,
+# envtest and container suites are deselected by default and get their own jobs, so the boundary
+# of the test rig stays legible rather than being blurred into one green tick.
 
 on:
   push:
@@ -23,3 +23,38 @@ jobs:
       python-versions: '["3.11", "3.12", "3.13"]'
       sync-args: "--dev"
       run-mypy: true
+
+  # A real Kubernetes cluster, created and destroyed by the job. Every failure in
+  # src/quayz/failures.py is produced against it and read off it.
+  #
+  # EVERY VERSION HERE IS PINNED AND THE ACTION'S OWN DEFAULTS ARE ALL WRONG FOR THIS. It
+  # defaults to kind v0.31.0, kubectl v1.35.0, a cluster named chart-testing and a 60 second
+  # wait. A cold create on the machine this was developed on took 98 seconds, so the wait is
+  # generous rather than default, and kind's own release notes insist the node image is pinned
+  # by digest because a tag alone does not guarantee an image built for that release.
+  cluster:
+    name: every failure, on a cluster made and destroyed here
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.21.4
+      - uses: helm/kind-action@v1.14.0
+        with:
+          version: v0.33.0
+          kubectl_version: v1.37.0
+          node_image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+          cluster_name: quayz-ci
+          wait: 180s
+          install_only: true
+      - run: uv sync --dev
+      - name: produce every failure and record what each instrument said
+        run: scripts/measure_failures.sh quayz-ci
+      - name: fail if any measured outcome has changed
+        run: git diff --exit-code -- docs/evidence/cluster/summary.json
+      - name: the offline half, against what was just recorded
+        run: uv run pytest tests/test_cluster_failures.py
