@@ -175,6 +175,69 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             ghcr.io/pnx89/quayz-watch@${{ steps.push.outputs.digest }}
 
+  # The toolbox: four binaries at the versions this repository's evidence was made with.
+  #
+  # BUILT WITH BUILDX AND NOT PLAIN docker build, because the architecture has to be asserted and
+  # only buildx honours the declaration. Built with the legacy builder on an arm64 host, the
+  # image reports linux/arm64 while every binary inside it is x86-64, and it runs only where
+  # emulation happens to be available. That is an image lying about itself, and the assertion
+  # below is what stops it shipping.
+  #
+  # NOT PUSHED. Terraform's CLI is BUSL 1.1 under IBM, and its Additional Use Grant excludes
+  # offering the work to third parties on a hosted or embedded basis. Building an image for
+  # whoever clones this is squarely inside that; publishing one to a registry is a redistribution
+  # question nobody needs this repository to answer.
+  toolbox:
+    name: four binaries, checksummed, and an image that admits its architecture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build it, which is the only way to know the checksums are right
+        run: |
+          docker buildx build toolbox \
+            --platform linux/amd64 \
+            --load --tag quayz-toolbox:ci
+
+      - name: the image must admit what it actually contains
+        run: |
+          arch=$(docker image inspect quayz-toolbox:ci --format '{{.Architecture}}')
+          echo "image architecture: $arch"
+          if [ "$arch" != "amd64" ]; then
+            echo "the image reports $arch and its binaries are amd64" >&2
+            exit 1
+          fi
+
+      - name: every tool is the version the evidence was produced with
+        run: |
+          set -e
+          docker run --rm quayz-toolbox:ci kind version | grep -q 'v0.33.0'
+          docker run --rm quayz-toolbox:ci helm version --short | grep -q 'v3.21.4'
+          docker run --rm quayz-toolbox:ci terraform version | head -1 | grep -q 'v1.16.0'
+          docker run --rm quayz-toolbox:ci kubectl version --client=true -o yaml | grep -q 'v1.37.0'
+
+      - name: and it does the half that needs no cluster
+        # The half that CAN be proved without handing a build agent the Docker socket. Creating
+        # a cluster from inside the toolbox needs the host daemon, which is a real thing to hand
+        # a container rather than a detail, so it is not done here and the README says so.
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work quayz-toolbox:ci \
+            helm lint charts/deploy-canary
+          docker run --rm -v "$PWD:/work" -w /work quayz-toolbox:ci \
+            helm template canary charts/deploy-canary
+          docker run --rm -v "$PWD:/work" -w /work quayz-toolbox:ci \
+            terraform -chdir=terraform/cluster fmt -check -recursive
+
+      - name: it runs as somebody other than root
+        run: |
+          who=$(docker run --rm quayz-toolbox:ci id -un)
+          echo "runs as: $who"
+          if [ "$who" = "root" ]; then
+            echo "the toolbox runs as root, and it is meant to be handed a Docker socket" >&2
+            exit 1
+          fi
+
   # A real Kubernetes cluster, created and destroyed by the job. Every failure in
   # src/quayz/failures.py is produced against it and read off it.
   #
