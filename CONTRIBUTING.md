@@ -7,13 +7,12 @@ be useful is usually to disagree with something it claims.
 
 ```bash
 git clone https://github.com/PNX89/QUAYZ.git && cd QUAYZ
-uv sync --dev
-uv run pytest -q
+uv sync --all-extras --dev
+uv run python examples/tell_them_apart.py
 ```
 
-This repository is still being built and has no demonstration command yet, so this section
-does not invent one. It is generated from the shared manifest and will name the demo on the
-day there is one to name.
+Under a minute from clone to output, offline, with nothing to configure and no key to supply.
+If that is not true on your machine, that is a bug and worth an issue on its own.
 
 ## The checks you can run here
 
@@ -26,6 +25,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy
 uv run pytest -q
+uv run pytest -o addopts="" -m cluster -v
 ```
 
 Run every one of them. Running only the test suite is the most common way to be surprised by a
@@ -64,10 +64,15 @@ introduces it.
 
 ## Regenerating the evidence
 
-Numbers in the README, and the published card, are captured from a real run rather than
-typed. Neither exists here yet: the README is written last, from that captured output, so
-the page in this repository today is a placeholder and says so. It will be committed rather
-than left in a log. Actions logs are kept for 90 days and then the run and
+Some numbers in the README, and everything on the card at
+https://pnx89.github.io/QUAYZ, come from a real run whose output is committed under
+`docs/evidence/`. If you change behaviour, regenerate rather than editing either by hand:
+
+```bash
+uv run python scripts/capture_evidence.py
+```
+
+The output is committed on purpose. Actions logs are kept for 90 days and then the run and
 everything it printed are gone, so a claim that lives only in a log outlives its own evidence.
 Nothing here runs on a schedule either: GitHub disables a scheduled workflow in a public
 repository after 60 days without activity, which is a month before that retention window closes,
@@ -78,8 +83,8 @@ so a safeguard on a timer would switch itself off just before it was needed.
 The pull request template carries the checklist. Two items on it are unusual and are the ones
 that matter most here:
 
-- **Does any number in the README still hold?** Numbers here are captured rather than typed,
-  so regenerate rather than edit by hand.
+- **Does any number in the README still hold?** Several are asserted by tests against a real
+  run. If you changed behaviour, regenerate rather than edit by hand.
 - **Does the prose still describe the code?** A claim that has quietly stopped being true is
   worse than no claim, and it is the specific failure this whole toolset is built around.
 
