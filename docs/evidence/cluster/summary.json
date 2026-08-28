@@ -1,17 +1,52 @@
 {
-  "healthy_endpoints_ready": 2,
-  "healthy_endpoints_not_ready": 0,
-
-  "never_ready_restart_count": 0,
-  "never_ready_endpoints_ready": 0,
-  "never_ready_endpoints_not_ready": 2,
-  "never_ready_addresses_in_the_wide_column": 2,
-
-  "crash_loop_reason": "Error",
-  "crash_loop_exit_code": 1,
+  "cases": {
+    "healthy": {
+      "phase": "Running",
+      "restarted": false,
+      "terminated_reason": null,
+      "exit_code": null,
+      "waiting_reason": null,
+      "endpoints_ready": 2,
+      "endpoints_not_ready": 0
+    },
+    "alive but never ready": {
+      "phase": "Running",
+      "restarted": false,
+      "terminated_reason": null,
+      "exit_code": null,
+      "waiting_reason": null,
+      "endpoints_ready": 0,
+      "endpoints_not_ready": 2
+    },
+    "crash loop": {
+      "phase": "Running",
+      "restarted": true,
+      "terminated_reason": "Error",
+      "exit_code": 1,
+      "waiting_reason": "CrashLoopBackOff",
+      "endpoints_ready": 0,
+      "endpoints_not_ready": 1
+    },
+    "killed for memory": {
+      "phase": "Running",
+      "restarted": true,
+      "terminated_reason": "OOMKilled",
+      "exit_code": 137,
+      "waiting_reason": "CrashLoopBackOff",
+      "endpoints_ready": 0,
+      "endpoints_not_ready": 1
+    },
+    "image cannot be pulled": {
+      "phase": "Pending",
+      "restarted": false,
+      "terminated_reason": null,
+      "exit_code": null,
+      "waiting_reason": "ImagePullBackOff",
+      "endpoints_ready": 0,
+      "endpoints_not_ready": 1
+    }
+  },
   "crash_loop_log_lines": 1,
-
-  "oom_reason": "OOMKilled",
-  "oom_exit_code": 137,
-  "oom_log_lines_mentioning_a_problem": 0
+  "oom_log_lines_mentioning_a_problem": 0,
+  "never_ready_addresses_in_the_wide_column": 2
 }

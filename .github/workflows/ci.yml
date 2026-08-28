@@ -258,7 +258,10 @@ jobs:
           refuses --set image.digest=notadigest
           # The crash loop exits before the allocation starts, so the OOMKill never happens.
           refuses --set failure.crashLoop=true --set failure.outOfMemory=true
-          for switch in neverReady crashLoop outOfMemory; do
+          # And every other combination, because the guard counts rather than naming a pair.
+          refuses --set failure.badImage=true --set failure.neverReady=true
+          refuses --set failure.crashLoop=true --set failure.neverReady=true
+          for switch in neverReady crashLoop outOfMemory badImage; do
             helm_in_the_box --set "failure.$switch=true" >/dev/null
             echo "renders: failure.$switch=true"
           done
