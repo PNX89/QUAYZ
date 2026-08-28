@@ -15,11 +15,10 @@ This repository is still being built and has no demonstration command yet, so th
 does not invent one. It is generated from the shared manifest and will name the demo on the
 day there is one to name.
 
-## The checks that gate every push
+## The checks you can run here
 
-These are read out of `.github/workflows/ci.yml` when this file is generated, so the list
-cannot drift away from what CI actually runs. All of them must pass locally before a pull
-request will go green:
+These are read out of `.github/workflows/ci.yml` when this file is generated, so no command
+here is one CI does not run:
 
 ```bash
 uv sync --dev
@@ -31,6 +30,20 @@ uv run pytest -q
 
 Run every one of them. Running only the test suite is the most common way to be surprised by a
 red badge: formatting and typing are gates here, not suggestions.
+
+## And the jobs that gate the pull request
+
+- lint, types and the offline suite
+- the controller, in Go
+- built twice and compared, and signed on main
+- four binaries, checksummed, and an image that admits its architecture
+- every failure, on a cluster made and destroyed here
+
+The list above is longer than the commands above it, and that is the point of naming it. A
+pull request is green when every one of those jobs is, and some of them need something this
+clone does not give you. Passing everything in the previous section is necessary and it is not
+sufficient, which is a sentence this file used to get wrong: it called the command list "the
+checks that gate every push" and left out every job that runs anything other than uv.
 
 ## Everything merges through a pull request
 
