@@ -1,0 +1,18 @@
+{
+  "healthy_pods_ready": 2,
+  "healthy_pods_total": 2,
+
+  "atomic_upgrade_exit_code": 1,
+  "atomic_pods_ready_afterwards": 2,
+  "atomic_pods_total_afterwards": 2,
+  "atomic_release_status_afterwards": "deployed",
+
+  "bare_upgrade_exit_code": 1,
+  "pods_ready_while_the_broken_revision_stood": 2,
+  "pods_total_while_the_broken_revision_stood": 3,
+
+  "rollback_exit_code": 0,
+  "pods_ready_after_the_rollback": 2,
+  "pods_total_after_the_rollback": 2,
+  "revisions_in_the_history": 5
+}
