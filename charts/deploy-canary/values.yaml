@@ -1,6 +1,10 @@
 # Defaults chosen so `helm template` with no overrides renders something valid and installable.
 # Every value that decides a FAILURE MODE is here, because the point of this chart is being able
 # to ask for each failure by name rather than by editing a template.
+#
+# EVERY VALUE BELOW IS CONSTRAINED BY values.schema.json, and that file is worth reading before
+# this one. Without it `--set-string failure.crashLoop=false` installed a crash-looping pod, and
+# `--set failure.crashloop=true` installed a healthy one while the caller believed otherwise.
 
 # busybox rather than a purpose-built test image, deliberately. Every failure in this chart is
 # produced by a shell line a reader can see in the template, not by a flag whose behaviour they
@@ -8,7 +12,15 @@
 image:
   repository: busybox
   tag: "1.37"
-  # Pinned by digest as well as by tag. The tag is for a reader, the digest is what runs.
+  # EMPTY BY DEFAULT, AND THE TAG ABOVE IS WHAT RUNS. Said plainly because the earlier wording
+  # here claimed "the digest is what runs" beside an empty string, which meant every rendered
+  # manifest and every committed transcript in this repository pulled a mutable tag while the
+  # file said otherwise. Set this to pin, and the schema requires a real sha256 digest: an
+  # unconstrained string rendered `busybox@notadigest` quite happily.
+  #
+  # The things this repository SHIPS are digest pinned, and they are a different question from a
+  # throwaway canary: controller/Dockerfile pins its base, and the CI job pins the kind node
+  # image, both by digest.
   digest: ""
   pullPolicy: IfNotPresent
 
@@ -41,14 +53,23 @@ resources:
 # Liveness asks "is this process wedged", and its answer restarts the container. Readiness asks
 # "should traffic go here", and its answer only adds or removes an endpoint. Setting them to the
 # same check is the common mistake: a slow dependency then restarts a process that was working.
+#
+# THE PATHS HERE ARE THE PATHS THAT RENDER. They did not use to be: this file advertised
+# /healthz and /readyz, the template asked for `/` and an exec on a file, and both values were
+# read by nothing. A values file that documents an endpoint the chart never requests is worse
+# than one that says nothing, because a reader goes looking for the handler.
 probes:
   liveness:
-    path: /healthz
+    # `/` because that is what this container serves: busybox httpd over a directory. Point this
+    # at /healthz and every probe is a 404, which is a failed liveness probe, which restarts a
+    # working container. The schema requires a path and cannot know which paths exist.
+    path: /
     initialDelaySeconds: 2
     periodSeconds: 5
     failureThreshold: 6
   readiness:
-    path: /readyz
+    # No path. Readiness here is an exec that tests for /tmp/ready, and that is the point: the
+    # two probes use different mechanisms because they answer different questions.
     initialDelaySeconds: 1
     periodSeconds: 2
     failureThreshold: 2
