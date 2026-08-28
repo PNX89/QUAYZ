@@ -1,12 +1,15 @@
-$ helm install canary charts/deploy-canary --set failure.crashLoop=true
+$ helm install canary charts/deploy-canary --set failure.crashLoop=true --set replicaCount=1
 # failure: crash loop
 
 --- kubectl get pods ---
-canary-canary-5fc9484fc6-lqgk7   0/1   CrashLoopBackOff   2 (21s ago)   40s
+canary-canary-5fc9484fc6-ll4db   0/1   CrashLoopBackOff   1 (8s ago)   13s
 
---- the field that separates them ---
-restartCount lastState.terminated.reason exitCode
-2 Error 1
+--- pod phase ---
+Running
+
+--- the fields that separate them ---
+restartCount lastState.terminated.reason exitCode state.waiting.reason
+1 Error 1 CrashLoopBackOff
 
 --- kubectl logs, in full ---
 exiting on purpose
@@ -16,4 +19,4 @@ ready notready
 0 1
 
 --- and the WIDE output of the same EndpointSlice, which must not be trusted ---
-canary-canary-ccrn7   IPv4   8080   10.244.0.9   40s
+canary-canary-bxxt2   IPv4   8080   10.244.0.9   13s

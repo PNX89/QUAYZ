@@ -1,0 +1,22 @@
+$ helm install canary charts/deploy-canary --set failure.badImage=true --set replicaCount=1
+# failure: image cannot be pulled
+
+--- kubectl get pods ---
+canary-canary-5b59b5ddfd-j5zm6   0/1   ImagePullBackOff   0     19s
+
+--- pod phase ---
+Pending
+
+--- the fields that separate them ---
+restartCount lastState.terminated.reason exitCode state.waiting.reason
+0 none none ImagePullBackOff
+
+--- kubectl logs, in full ---
+Error from server (BadRequest): container "canary" in pod "canary-canary-5b59b5ddfd-j5zm6" is waiting to start: trying and failing to pull image
+
+--- EndpointSlice conditions ---
+ready notready
+0 1
+
+--- and the WIDE output of the same EndpointSlice, which must not be trusted ---
+canary-canary-bx9qt   IPv4   8080   10.244.0.11   19s

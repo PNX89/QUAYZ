@@ -4,12 +4,23 @@
   "description": "Constrains the values Helm will accept. It exists because of three measured holes, all of which helm lint and helm template called fine: `--set-string failure.crashLoop=false` rendered a crash-looping pod, because a non-empty string is truthy in a Go template and \"false\" is a non-empty string; `--set image.pullPolicy=y` rendered a YAML 1.1 boolean that the API server's own deserializer rejects; and `--set image.digest=notadigest` rendered an image reference no registry will resolve. additionalProperties is false everywhere on purpose: `--set failure.crashloop=true`, with the wrong case, silently asked for nothing and installed a healthy pod, which is worse than an error because the caller believes they measured a crash loop.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "replicaCount", "failure", "resources", "probes"],
+  "required": [
+    "image",
+    "replicaCount",
+    "failure",
+    "resources",
+    "probes"
+  ],
   "properties": {
     "image": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository", "tag", "digest", "pullPolicy"],
+      "required": [
+        "repository",
+        "tag",
+        "digest",
+        "pullPolicy"
+      ],
       "properties": {
         "repository": {
           "type": "string",
@@ -25,7 +36,11 @@
           "pattern": "^$|^sha256:[0-9a-f]{64}$"
         },
         "pullPolicy": {
-          "enum": ["Always", "IfNotPresent", "Never"]
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
         }
       }
     },
@@ -35,54 +50,105 @@
       "minimum": 1
     },
     "failure": {
-      "description": "The switches this chart exists for. Booleans, and only booleans.",
+      "description": "The switches this chart exists for. Booleans, and only booleans, and at most one of them true: the template refuses two because they are not independent.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["neverReady", "crashLoop", "outOfMemory"],
+      "required": [
+        "neverReady",
+        "crashLoop",
+        "outOfMemory",
+        "badImage"
+      ],
       "properties": {
-        "neverReady": { "type": "boolean" },
-        "crashLoop": { "type": "boolean" },
-        "outOfMemory": { "type": "boolean" }
+        "neverReady": {
+          "type": "boolean"
+        },
+        "crashLoop": {
+          "type": "boolean"
+        },
+        "outOfMemory": {
+          "type": "boolean"
+        },
+        "badImage": {
+          "type": "boolean"
+        }
       }
     },
     "resources": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["requests", "limits"],
+      "required": [
+        "requests",
+        "limits"
+      ],
       "properties": {
-        "requests": { "$ref": "#/definitions/quantities" },
-        "limits": { "$ref": "#/definitions/quantities" }
+        "requests": {
+          "$ref": "#/definitions/quantities"
+        },
+        "limits": {
+          "$ref": "#/definitions/quantities"
+        }
       }
     },
     "probes": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["liveness", "readiness"],
+      "required": [
+        "liveness",
+        "readiness"
+      ],
       "properties": {
         "liveness": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["path", "initialDelaySeconds", "periodSeconds", "failureThreshold"],
+          "required": [
+            "path",
+            "initialDelaySeconds",
+            "periodSeconds",
+            "failureThreshold"
+          ],
           "properties": {
             "path": {
               "description": "The path the HTTP GET asks for. It has to be one the server actually serves: this container serves a directory, so anything other than / is a 404 and a 404 restarts the container.",
               "type": "string",
               "pattern": "^/"
             },
-            "initialDelaySeconds": { "type": "integer", "minimum": 0 },
-            "periodSeconds": { "type": "integer", "minimum": 1 },
-            "failureThreshold": { "type": "integer", "minimum": 1 }
+            "initialDelaySeconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "periodSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "failureThreshold": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         },
         "readiness": {
           "description": "No path here on purpose. Readiness is an exec that looks for a file, and the difference between the two mechanisms is the subject of this chart.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["initialDelaySeconds", "periodSeconds", "failureThreshold"],
+          "required": [
+            "initialDelaySeconds",
+            "periodSeconds",
+            "failureThreshold"
+          ],
           "properties": {
-            "initialDelaySeconds": { "type": "integer", "minimum": 0 },
-            "periodSeconds": { "type": "integer", "minimum": 1 },
-            "failureThreshold": { "type": "integer", "minimum": 1 }
+            "initialDelaySeconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "periodSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "failureThreshold": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         }
       }
@@ -92,17 +158,26 @@
     "quantities": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cpu", "memory"],
+      "required": [
+        "cpu",
+        "memory"
+      ],
       "properties": {
         "cpu": {
           "description": "A Kubernetes quantity. Whole cores may be written as a number, so both types are allowed and the pattern applies to the string form.",
-          "type": ["string", "integer"],
+          "type": [
+            "string",
+            "integer"
+          ],
           "minimum": 0,
           "pattern": "^[0-9]+(\\.[0-9]+)?m?$"
         },
         "memory": {
           "description": "A Kubernetes quantity. `abc` is accepted by helm and rejected by the API server's decoder, which is a failure that only appears on a cluster.",
-          "type": ["string", "integer"],
+          "type": [
+            "string",
+            "integer"
+          ],
           "minimum": 0,
           "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$"
         }

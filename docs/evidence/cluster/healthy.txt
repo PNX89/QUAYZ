@@ -1,13 +1,16 @@
-$ helm install canary charts/deploy-canary
+$ helm install canary charts/deploy-canary --wait
 # failure: none, this is the control
 
 --- kubectl get pods ---
-canary-canary-68f9c577f9-89cbc   1/1   Running   0     10s
-canary-canary-68f9c577f9-rkjp7   1/1   Running   0     10s
+canary-canary-68f9c577f9-k8vgl   1/1   Running   0     10s
+canary-canary-68f9c577f9-n2bvh   1/1   Running   0     10s
 
---- the field that separates them ---
-restartCount lastState.terminated.reason exitCode
-0 none none
+--- pod phase ---
+Running
+
+--- the fields that separate them ---
+restartCount lastState.terminated.reason exitCode state.waiting.reason
+0 none none none
 
 --- kubectl logs, in full ---
 
@@ -16,4 +19,4 @@ ready notready
 2 0
 
 --- and the WIDE output of the same EndpointSlice, which must not be trusted ---
-canary-canary-zb4m9   IPv4   8080   10.244.0.5,10.244.0.6   10s
+canary-canary-75wk5   IPv4   8080   10.244.0.5,10.244.0.6   10s
