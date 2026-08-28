@@ -1,0 +1,18 @@
+{{- /*
+The Service exists so readiness has somewhere to be observed. A readiness probe with nothing
+selecting the pod is a probe whose result nobody can see, and "the pod is not in the endpoints"
+is the only place the alive-but-never-ready failure becomes visible.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "deploy-canary.name" . }}
+  labels:
+    {{- include "deploy-canary.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "deploy-canary.selector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
