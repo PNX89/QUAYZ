@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+.python-version
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Go
+controller/bin/
+*.test
+
+# envtest binaries, fetched by setup-envtest rather than committed. They are third-party
+# binaries and vendoring them would put kube-apiserver and etcd in an MIT tree.
+bin/
+envtest-bins/
+
+# Docker and build output
+.build/
+
+# macOS
+.DS_Store
+._*

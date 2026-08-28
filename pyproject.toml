@@ -1,0 +1,51 @@
+[project]
+name = "quayz"
+version = "0.1.0"
+description = "What a cluster does when the deploy is wrong, proved on a cluster that is created and destroyed by the test run"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pyyaml>=6",
+    "types-PyYAML>=6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quayz"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Three markers, all DESELECTED by default rather than skipped, because a skipped test reports
+# as a pass and nobody reads it. Every one of them needs something installed that a stranger
+# cloning this will not have.
+#   cluster:   needs a kind cluster, which the test run creates and destroys
+#   envtest:   needs the controller-runtime control plane binaries, fetched once
+#   container: needs a Docker runtime for a real image build
+addopts = "-q -m 'not cluster and not envtest and not container'"
+markers = [
+    "cluster: needs a kind cluster. Run with -m cluster.",
+    "envtest: needs kube-apiserver and etcd from setup-envtest. Run with -m envtest.",
+    "container: needs a Docker runtime. Run with -m container.",
+]
+filterwarnings = ["error"]
+
+[tool.mypy]
+# scripts joins this list as soon as it holds Python. Naming a directory mypy cannot find is
+# an error rather than a no-op, so it is added with its first file rather than in advance.
+files = ["src", "tests"]
+strict = true
