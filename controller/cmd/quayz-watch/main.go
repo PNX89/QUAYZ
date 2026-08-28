@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -22,6 +23,9 @@ import (
 func main() {
 	kubeconfig := flag.String("kubeconfig", "", "path to a kubeconfig; empty means in-cluster")
 	namespace := flag.String("namespace", "default", "namespace to watch")
+	resync := flag.Duration("resync", 30*time.Second,
+		"how often to re-examine every pod held. Must be non-zero: a pod that is running and not "+
+			"ready stops producing events, and the clock is what tells starting from never ready")
 	flag.Parse()
 
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
@@ -39,12 +43,12 @@ func main() {
 	defer cancel()
 
 	report := func(finding classify.Finding) {
-		fmt.Printf("%s/%s %s reason=%q exit=%d restarts=%d\n",
-			finding.Pod, finding.Container, finding.Verdict,
+		fmt.Printf("%s/%s/%s %s reason=%q exit=%d restarts=%d\n",
+			finding.Namespace, finding.Pod, finding.Container, finding.Verdict,
 			finding.Reason, finding.ExitCode, finding.Restarts)
 	}
 
-	if err := watch.Run(ctx, client, watch.Options{Namespace: *namespace}, report); err != nil &&
+	if err := watch.Run(ctx, client, watch.Options{Namespace: *namespace, Resync: *resync}, report); err != nil &&
 		ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "watching: %v\n", err)
 		os.Exit(1)
