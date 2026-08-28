@@ -9,7 +9,12 @@
 //
 // FIRST, cache.NewListWatchFromClient with a nil field selector SEGFAULTS in client-go v0.37:
 // listwatch.go calls fieldSelector.String() unconditionally. It is not a nil check away from
-// working, it is a nil dereference. fields.Everything() is the value to pass.
+// working, it is a nil dereference. fields.Everything() is the value to pass. That is recorded
+// here and NOT guarded in the code any more, which is a correction: this file used to set the
+// field selector through WithTweakListOptions with a comment saying it stopped the segfault. It
+// did not. fields.Everything().String() is the empty string, so the tweak set the default, and
+// the crash is on a code path this package does not take. A guard against a bug that cannot
+// happen here reads as protection and is not, so it is gone and the lesson stayed.
 //
 // SECOND, WatchListClient has defaulted to TRUE since Kubernetes v1.35. A reflector with the
 // default feature gates does not call List at all: it opens a watch with SendInitialEvents set
@@ -32,11 +37,10 @@ package watch
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -44,16 +48,33 @@ import (
 	"github.com/PNX89/QUAYZ/controller/classify"
 )
 
+// findingPrefix identifies the container a finding is about. It ends in a separator so that one
+// container's key cannot be a prefix of another's: `canary` and `canary2` are different
+// containers, and forgetting the first must not forget the second.
+func findingPrefix(finding classify.Finding) string {
+	return fmt.Sprintf("%s/%s/%s/", finding.Namespace, finding.Pod, finding.Container)
+}
+
 // Reporter receives every finding worth acting on. Taking a function rather than writing to a
 // log means the tests observe exactly what a real caller would.
 type Reporter func(classify.Finding)
 
 // Options are what a caller has to decide, all of them without defaults on purpose.
 type Options struct {
+	// Namespace to watch. The empty string is every namespace, which is why a Finding carries
+	// the namespace and the deduplication key includes it: two pods called web-0 in two
+	// namespaces are two pods, and a key without the namespace reports one of them and swallows
+	// the other.
 	Namespace string
-	// Resync is how often the informer re-delivers everything it holds. Zero means never, which
-	// is the right answer here: this reports state changes, and a resync would re-report a pod
-	// that has been crash-looping since yesterday every interval.
+	// Resync is how often the informer re-delivers everything it holds, and it MUST NOT BE ZERO.
+	//
+	// This is a correction. It used to say zero was right, on the argument that a resync would
+	// re-report a pod that had been crash-looping since yesterday. The deduplication below
+	// already prevents that, so the argument was for a cost that does not exist, and the cost of
+	// zero is real: a pod that is Running and not ready settles, stops producing events, and is
+	// never looked at again. If it was still inside classify.ReadyGrace when the last event
+	// arrived, the failure this repository is most interested in is never reported at all. A
+	// resync is what gives the clock a second look.
 	Resync time.Duration
 }
 
@@ -67,18 +88,37 @@ func Run(ctx context.Context, client kubernetes.Interface, options Options, repo
 	if report == nil {
 		return fmt.Errorf("no reporter: a watch whose findings go nowhere is a busy loop")
 	}
+	if options.Resync <= 0 {
+		return fmt.Errorf(
+			"resync is %s: a pod that is running and not ready stops producing events, so with "+
+				"no resync one that was still starting when it was last seen is never looked at "+
+				"again and never-ready is unreachable", options.Resync)
+	}
 
 	seen := map[string]bool{}
+	forget := func(finding classify.Finding) {
+		for key := range seen {
+			if strings.HasPrefix(key, findingPrefix(finding)) {
+				delete(seen, key)
+			}
+		}
+	}
 	handle := func(object any) {
 		pod, ok := object.(*corev1.Pod)
 		if !ok {
 			return
 		}
-		for _, finding := range classify.Pod(pod) {
+		for _, finding := range classify.Pod(pod, time.Now()) {
 			if !finding.Verdict.Interesting() {
+				// Recovered, or never broken. Either way the container's earlier verdicts are
+				// forgotten, so the same failure happening AGAIN is heard again. This is
+				// deduplication state and not a retraction: nothing here tells a consumer that a
+				// pod it was told about is now fine, and a consumer that needs to know that
+				// needs an event carrying the recovery rather than the absence of one.
+				forget(finding)
 				continue
 			}
-			key := fmt.Sprintf("%s/%s/%s", finding.Pod, finding.Container, finding.Verdict)
+			key := findingPrefix(finding) + string(finding.Verdict)
 			if seen[key] {
 				continue
 			}
@@ -91,19 +131,22 @@ func Run(ctx context.Context, client kubernetes.Interface, options Options, repo
 		client,
 		options.Resync,
 		informers.WithNamespace(options.Namespace),
-		// fields.Everything(), NOT nil. A nil field selector segfaults in client-go v0.37:
-		// listwatch.go calls fieldSelector.String() without checking it. The selector is set
-		// explicitly here even though it selects everything, so nobody removes the argument and
-		// rediscovers that.
-		informers.WithTweakListOptions(func(list *metav1.ListOptions) {
-			list.FieldSelector = fields.Everything().String()
-		}),
 	)
 
 	informer := factory.Core().V1().Pods().Informer()
 	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    handle,
 		UpdateFunc: func(_, object any) { handle(object) },
+		// A deleted pod's verdicts go with it. Without this, a StatefulSet replacing web-0 with
+		// a new web-0 that fails the same way is deduplicated against the dead one's key and
+		// nobody is told.
+		DeleteFunc: func(object any) {
+			if pod, ok := object.(*corev1.Pod); ok {
+				for _, finding := range classify.Pod(pod, time.Now()) {
+					forget(finding)
+				}
+			}
+		},
 	}); err != nil {
 		return fmt.Errorf("adding the event handler: %w", err)
 	}
