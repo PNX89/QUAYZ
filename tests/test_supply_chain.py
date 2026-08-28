@@ -111,3 +111,62 @@ def test_the_claim_names_which_digest_it_is_about(phrase: str) -> None:
         f"the workflow does not mention the {phrase}, so a reader cannot tell which of the two "
         f"this repository claims is stable"
     )
+
+
+TOOLBOX = REPO / "toolbox" / "Dockerfile"
+
+
+def test_the_toolbox_verifies_every_binary_against_a_checksum() -> None:
+    """A version is what you asked for. A checksum is what you got.
+
+    Four downloads, four `sha256sum -c`. Counted rather than searched for, because a file with
+    one checksum and three bare downloads passes a search and fails a review.
+    """
+    text = TOOLBOX.read_text(encoding="utf-8")
+    downloads = text.count("curl -fsSLo")
+    checks = text.count("sha256sum -c -")
+    assert downloads == 4, f"{downloads} downloads, expected four"
+    assert checks == downloads, (
+        f"{downloads} downloads and {checks} checksum verifications: something is fetched on trust"
+    )
+
+
+def test_the_toolbox_declares_its_platform() -> None:
+    """Because the first version of it produced an image that lied about its architecture.
+
+    Built on an arm64 host it downloaded amd64 binaries, succeeded, and reported linux/arm64.
+    It ran only because the local VM had emulation. The declaration is here and CI asserts the
+    result, since the legacy builder ignores the declaration and buildx honours it.
+    """
+    text = TOOLBOX.read_text(encoding="utf-8")
+    froms = [line for line in text.splitlines() if line.startswith("FROM ")]
+    assert froms, "no FROM lines"
+    undeclared = [line for line in froms if "--platform=" not in line]
+    assert undeclared == [], f"these stages do not declare a platform: {undeclared}"
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "the image must admit what it actually contains" in workflow, (
+        "nothing in CI asserts the built image's architecture, which is the only place the "
+        "declaration can be checked"
+    )
+
+
+def test_the_toolbox_does_not_run_as_root() -> None:
+    """It is meant to be handed a Docker socket, which carries the daemon's authority."""
+    text = TOOLBOX.read_text(encoding="utf-8")
+    assert "USER toolbox" in text
+    assert text.rindex("USER toolbox") > text.rindex("apt-get"), (
+        "the USER line comes before the last apt-get, so the image still ends as root"
+    )
+
+
+def test_the_toolbox_is_not_pushed_anywhere() -> None:
+    """Terraform's CLI is BUSL 1.1 under IBM and redistribution is where that starts to matter.
+
+    Building an image for whoever clones this is inside the Additional Use Grant. Publishing one
+    is a question this repository does not need to answer, so the job does not push.
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    toolbox_job = workflow[workflow.index("  toolbox:") : workflow.index("  # A real Kubernetes")]
+    assert "--push" not in toolbox_job, "the toolbox job pushes the image"
+    assert "BUSL" in workflow, "the workflow does not say why it is not pushed"
