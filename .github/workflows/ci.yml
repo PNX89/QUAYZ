@@ -43,6 +43,11 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.21.4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.0
+          # The wrapper reformats stdout and this job reads exit codes off terraform.
+          terraform_wrapper: false
       - uses: helm/kind-action@v1.14.0
         with:
           version: v0.33.0
@@ -60,5 +65,10 @@ jobs:
         run: scripts/measure_rollback.sh quayz-ci-rollback
       - name: fail if any recovery outcome has changed
         run: git diff --exit-code -- docs/evidence/rollback/summary.json
+      - name: edit a cluster by hand and ask two instruments about it
+        run: scripts/measure_drift.sh quayz-ci-drift
+      - name: fail if either detector has changed its answer
+        run: git diff --exit-code -- docs/evidence/drift/summary.json
       - name: the offline half, against what was just recorded
-        run: uv run pytest tests/test_cluster_failures.py tests/test_rollback.py
+        run: >-
+          uv run pytest tests/test_cluster_failures.py tests/test_rollback.py tests/test_drift.py
