@@ -32,6 +32,7 @@ import pytest
 REPO = pathlib.Path(__file__).resolve().parents[1]
 DOCKERFILE = REPO / "controller" / "Dockerfile"
 WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
+WORKFLOWS = REPO / ".github" / "workflows"
 
 #: A FROM line, capturing whatever follows the image reference separator.
 FROM_LINE = re.compile(r"^FROM\s+(\S+)", re.MULTILINE)
@@ -178,8 +179,18 @@ USES = re.compile(r"^\s*(?:- )?uses:\s*(\S+)\s*(#.*)?$", re.MULTILINE)
 FIRST_PARTY = "PNX89/.github/"
 
 
-def uses() -> list[tuple[str, str]]:
-    return [(ref, trailing or "") for ref, trailing in USES.findall(WORKFLOW.read_text("utf-8"))]
+def uses() -> list[tuple[str, str, str]]:
+    """Every `uses:` line in EVERY workflow, with the file it came from.
+
+    It read one file, and adding a second workflow is exactly how a repository ends up with one
+    file pinned by commit and another on floating tags while a test reports the first. The
+    filename is carried through so a failure names which workflow to fix.
+    """
+    found: list[tuple[str, str, str]] = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        for ref, trailing in USES.findall(path.read_text(encoding="utf-8")):
+            found.append((ref, trailing or "", path.name))
+    return found
 
 
 def test_every_third_party_action_is_pinned_by_commit() -> None:
@@ -190,10 +201,14 @@ def test_every_third_party_action_is_pinned_by_commit() -> None:
     with one pinned action and twelve tags passes a search and fails a review.
     """
     lines = uses()
-    assert lines, "the workflow has no `uses:` lines at all"
+    assert lines, "the workflows have no `uses:` lines at all"
+    assert len({name for _, _, name in lines}) >= 2, (
+        "only one workflow was read, and this test exists because a second one is where a "
+        "floating tag would hide"
+    )
     unpinned = [
-        ref
-        for ref, _ in lines
+        f"{name}: {ref}"
+        for ref, _, name in lines
         if not ref.startswith(FIRST_PARTY) and not re.search(r"@[0-9a-f]{40}$", ref)
     ]
     assert unpinned == [], f"these actions are pinned by a movable tag: {unpinned}"
@@ -201,11 +216,11 @@ def test_every_third_party_action_is_pinned_by_commit() -> None:
 
 def test_every_pin_names_the_version_it_came_from() -> None:
     """Forty hex characters tell a reviewer nothing about what they are approving."""
-    for ref, trailing in uses():
+    for ref, trailing, name in uses():
         if ref.startswith(FIRST_PARTY):
             continue
         assert trailing.strip().startswith("#") and len(trailing.strip()) > 2, (
-            f"{ref} is pinned with no version named beside it"
+            f"{name}: {ref} is pinned with no version named beside it"
         )
 
 
@@ -215,7 +230,7 @@ def test_the_one_unpinned_call_is_the_first_party_one_and_is_a_tag_not_a_branch(
     Asserted rather than assumed: a pin that becomes a branch is a pin that moves, and this is
     the only line in the file allowed to be anything other than a commit.
     """
-    first_party = [ref for ref, _ in uses() if ref.startswith(FIRST_PARTY)]
+    first_party = [ref for ref, _, _ in uses() if ref.startswith(FIRST_PARTY)]
     assert len(first_party) == 1, f"expected one first-party call, found {first_party}"
     tag = first_party[0].rsplit("@", 1)[1]
     assert re.fullmatch(r"v\d+(\.\d+)*", tag), f"the shared workflow is pinned to {tag!r}"
@@ -223,8 +238,12 @@ def test_the_one_unpinned_call_is_the_first_party_one_and_is_a_tag_not_a_branch(
 
 def test_nothing_in_the_workflow_fetches_latest() -> None:
     """`@latest` is not a version, and two steps used it to fetch a control plane."""
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    offenders = [line.strip() for line in workflow.splitlines() if "@latest" in line]
+    offenders = [
+        f"{path.name}: {line.strip()}"
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if "@latest" in line
+    ]
     assert offenders == [], f"these lines fetch whatever is newest today: {offenders}"
 
 
