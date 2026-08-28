@@ -56,6 +56,125 @@ jobs:
           KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path) \
             go test -tags envtest -v ./resume/...
 
+  # The supply chain. Built twice and compared, then signed.
+  #
+  # THIS JOB IS WHERE THE REPRODUCIBILITY CLAIM LIVES BECAUSE IT IS THE ONLY PLACE IT CAN. buildx
+  # is not installed on the machine this repository was written on, so the build that proves the
+  # claim cannot run there. Committing a transcript nobody could regenerate would be worse than
+  # enforcing the check here on every run, which is what this does: build twice, compare, fail.
+  #
+  # WHAT IS CLAIMED, PRECISELY. The IMAGE MANIFEST digest is reproducible. The attestation-bearing
+  # INDEX digest is NOT, by design: provenance carries wall-clock times and a random invocationId,
+  # and the SBOM generator stamps a random document UUID and its own creation time. Neither is
+  # normalised by SOURCE_DATE_EPOCH. Measured across six independent no-cache builds during the
+  # pre-flight, the manifest digest was identical every time and the index digest never was.
+  #
+  # AND SOURCE_DATE_EPOCH ALONE IS NOT ENOUGH. It normalises the image config and the history and
+  # does not rewrite file mtimes inside the layer tars, so two builds a second apart differ in
+  # four bytes of tar octal mtime. The exporter option rewrite-timestamp=true is what works, and
+  # it requires SOURCE_DATE_EPOCH to be set. Setting only the first gives a green result whenever
+  # two builds land in the same second, which is intermittent and flattering.
+  supplychain:
+    name: built twice, compared, then signed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Keyless signing needs an OIDC token. Free for a public repository.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+
+      - name: a fixed timestamp, from the commit rather than from the clock
+        id: epoch
+        run: echo "value=$(git log -1 --pretty=%ct)" >> "$GITHUB_OUTPUT"
+
+      - name: build it once
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.epoch.outputs.value }}
+        run: |
+          docker buildx build controller \
+            --no-cache --provenance=false --sbom=false \
+            --output type=oci,dest=/tmp/first.tar,rewrite-timestamp=true \
+            --metadata-file /tmp/first.json
+
+      - name: build it again, from nothing
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.epoch.outputs.value }}
+        run: |
+          docker buildx build controller \
+            --no-cache --provenance=false --sbom=false \
+            --output type=oci,dest=/tmp/second.tar,rewrite-timestamp=true \
+            --metadata-file /tmp/second.json
+
+      - name: the two manifest digests must be the same
+        run: |
+          first=$(jq -r '."containerimage.digest"' /tmp/first.json)
+          second=$(jq -r '."containerimage.digest"' /tmp/second.json)
+          echo "first  $first"
+          echo "second $second"
+          if [ -z "$first" ] || [ "$first" = "null" ]; then
+            echo "no digest in the metadata, so this compared nothing" >&2
+            exit 1
+          fi
+          if [ "$first" != "$second" ]; then
+            echo "the manifest digest is not reproducible" >&2
+            exit 1
+          fi
+
+      - name: and the bytes on disk differ, which is why the digest is the claim
+        # Two OCI tarballs can differ byte for byte while describing the identical image: tar
+        # member order and the layout metadata are not part of what a digest covers. Asserting
+        # the tarballs match would be asserting something stronger than reproducibility and it
+        # would fail for reasons nobody cares about.
+        run: |
+          if cmp -s /tmp/first.tar /tmp/second.tar; then
+            echo "note: the tarballs happen to match byte for byte as well"
+          else
+            echo "note: the tarballs differ, and the manifest digest above is what is claimed"
+          fi
+
+      - name: log in to the registry
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build with an SBOM and provenance, and push
+        if: github.ref == 'refs/heads/main'
+        id: push
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.epoch.outputs.value }}
+        run: |
+          docker buildx build controller \
+            --provenance=mode=max --sbom=true \
+            --tag ghcr.io/pnx89/quayz-watch:${{ github.sha }} \
+            --tag ghcr.io/pnx89/quayz-watch:latest \
+            --push --metadata-file /tmp/pushed.json
+          echo "digest=$(jq -r '."containerimage.digest"' /tmp/pushed.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: sigstore/cosign-installer@v3
+        if: github.ref == 'refs/heads/main'
+
+      - name: sign it, keyless
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cosign sign --yes \
+            ghcr.io/pnx89/quayz-watch@${{ steps.push.outputs.digest }}
+
+      - name: verify the signature this job just made
+        # Signing and not verifying proves the command exited zero. This proves the signature is
+        # findable and belongs to this workflow, which is the thing a consumer would check.
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/PNX89/QUAYZ/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            ghcr.io/pnx89/quayz-watch@${{ steps.push.outputs.digest }}
+
   # A real Kubernetes cluster, created and destroyed by the job. Every failure in
   # src/quayz/failures.py is produced against it and read off it.
   #
