@@ -30,3 +30,17 @@ envtest-bins/
 # macOS
 .DS_Store
 ._*
+
+# Terraform's working directory, which is a CACHE and not source. 121.7 MiB of macOS-arm64
+# provider binaries were committed here by a harness run: measure_drift.sh calls `terraform init`
+# in the tree, and nothing ignored what it downloaded. The lock file next to it IS source and is
+# committed, because it is what pins the versions; the binaries it points at are fetched.
+#
+# The same argument as the envtest note above, and it was got right there and wrong here: a
+# binary a tool downloads is a binary a reader would rather download themselves than clone.
+terraform/**/.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+crash.log
+crash.*.log

@@ -132,6 +132,54 @@ def test_every_measured_number_is_present_and_the_count_is_asserted() -> None:
     assert len(numbers) == 7, f"the summary has {len(numbers)} numbers, assert the new one"
 
 
+def test_no_terraform_working_directory_is_tracked() -> None:
+    """121.7 MiB of macOS provider binaries were committed here, and nothing noticed.
+
+    `measure_drift.sh` runs `terraform init` inside the tree, and `.terraform/` was not ignored,
+    so a harness run dropped two platform-specific provider binaries into the repository and a
+    later `git add -A` committed them. A clone was 41 MB of which 38 were downloadable from the
+    registry in a second.
+
+    Asked of git rather than of the filesystem on purpose: the directory is SUPPOSED to be there
+    after a run, and the question is whether it is tracked.
+    """
+    import subprocess
+
+    listed = subprocess.run(
+        ["git", "ls-files", "--", "terraform"],
+        capture_output=True,
+        text=True,
+        cwd=REPO,
+        check=True,
+    )
+    tracked = [line for line in listed.stdout.splitlines() if "/.terraform/" in line]
+    assert not tracked, f"terraform's working directory is tracked: {tracked}"
+
+
+def test_the_provider_lock_covers_both_machines_this_repository_runs_on() -> None:
+    """A lock recorded on one machine pins the versions and not the packages for the other.
+
+    `terraform init` records an `h1:` hash for the platform it ran on and nothing else, so a lock
+    made on this laptop carried darwin_arm64 alone while CI runs linux_amd64. It worked, because
+    the registry's `zh:` hashes cover every platform, which means the gap is invisible until a
+    provider is fetched from somewhere that does not supply them.
+
+    Terraform does not label which platform an `h1:` belongs to, so what is asserted is the
+    count: two per provider, which is what `terraform providers lock -platform=linux_amd64
+    -platform=darwin_arm64` produces and what one `terraform init` does not.
+    """
+    lock = (REPO / "terraform" / "cluster" / ".terraform.lock.hcl").read_text(encoding="utf-8")
+    blocks = lock.split('provider "')[1:]
+    assert len(blocks) == 2, f"{len(blocks)} providers in the lock, and the harness needs two"
+    for block in blocks:
+        name = block.split('"', 1)[0]
+        hashes = [line for line in block.splitlines() if '"h1:' in line]
+        assert len(hashes) == 2, (
+            f"{name} has {len(hashes)} h1 hashes, so the lock covers one platform. Re-record it "
+            f"with `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64`"
+        )
+
+
 @pytest.mark.cluster
 def test_the_drift_findings_still_hold_on_a_cluster() -> None:
     """Needs kind, kubectl, helm and terraform. Creates a cluster, edits it, destroys it."""
