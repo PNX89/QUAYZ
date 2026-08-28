@@ -1,0 +1,17 @@
+$ helm upgrade canary charts/deploy-canary --set failure.neverReady=true --wait --timeout 45s
+# exit code: 1, and WITHOUT --atomic the broken revision stays
+helm reports revision 4, pods ready / total: 2 3
+
+$ helm rollback canary 3 --wait --timeout 120s
+# exit code: 0
+Rollback was a success! Happy Helming!
+
+helm reports revision 5, pods ready / total: 2 2
+
+--- helm history, which is the evidence a rollback happened at all ---
+REVISION	UPDATED                 	STATUS    	CHART              	APP VERSION	DESCRIPTION                                       
+1       	Fri Aug 28 15:51:35 2026	superseded	deploy-canary-0.1.0	0.1.0      	Install complete                                  
+2       	Fri Aug 28 15:51:47 2026	failed    	deploy-canary-0.1.0	0.1.0      	Upgrade "canary" failed: context deadline exceeded
+3       	Fri Aug 28 15:52:47 2026	superseded	deploy-canary-0.1.0	0.1.0      	Rollback to 1                                     
+4       	Fri Aug 28 15:52:54 2026	failed    	deploy-canary-0.1.0	0.1.0      	Upgrade "canary" failed: context deadline exceeded
+5       	Fri Aug 28 15:53:45 2026	deployed  	deploy-canary-0.1.0	0.1.0      	Rollback to 3                                     
