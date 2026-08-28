@@ -354,14 +354,23 @@ jobs:
   # A real Kubernetes cluster, created and destroyed by the job. Every failure in
   # src/quayz/failures.py is produced against it and read off it.
   #
-  # EVERY VERSION HERE IS PINNED AND THE ACTION'S OWN DEFAULTS ARE ALL WRONG FOR THIS. It
-  # defaults to kind v0.31.0, kubectl v1.35.0, a cluster named chart-testing and a 60 second
-  # wait. A cold create on the machine this was developed on took 98 seconds, so the wait is
-  # generous rather than default, and kind's own release notes insist the node image is pinned
-  # by digest because a tag alone does not guarantee an image built for that release.
+  # EVERY VERSION HERE IS PINNED, and three of these inputs used to pin nothing at all. With
+  # `install_only: true` the action installs kind and kubectl and creates no cluster, so
+  # node_image, cluster_name and wait were read by nobody: every cluster any evidence in this
+  # repository was measured on came from the harnesses' own `kind create cluster` with no image
+  # argument. Kind's compiled-in default is itself digest pinned, so nothing was unsafe, but the
+  # comment here claimed a pin that was decorative, which is the same defect as a test that
+  # cannot fail.
+  #
+  # The digest is passed to the harnesses through KIND_NODE_IMAGE now, which is where the
+  # clusters are actually created. kind's release notes insist on the digest because a tag alone
+  # does not guarantee an image built for that kind release.
   cluster:
     name: every failure, on a cluster made and destroyed here
     runs-on: ubuntu-latest
+    env:
+      # Read by all three harnesses, which is where the clusters are created.
+      KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -379,23 +388,32 @@ jobs:
         with:
           version: v0.33.0
           kubectl_version: v1.37.0
-          node_image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
-          cluster_name: quayz-ci
-          wait: 180s
+          # No node_image, cluster_name or wait: install_only means this creates no cluster, so
+          # those three were inert. The image is passed to the harnesses below instead.
           install_only: true
       - run: uv sync --dev
-      - name: produce every failure and record what each instrument said
-        run: scripts/measure_failures.sh quayz-ci
+
+      - name: every harness, invoked the way the test suite invokes them
+        # THROUGH pytest AND NOT AS THREE SCRIPT CALLS, which is a correction with a real defect
+        # behind it. Three tests carry @pytest.mark.cluster and each one creates a cluster,
+        # produces its states and destroys it. They had NEVER RUN ANYWHERE: pyproject deselects
+        # the marker by default so that a stranger's `pytest` works without kind, and this job
+        # inherited that default, so the marker selected nothing on a laptop and nothing here.
+        #
+        # This repository's own description is "proved on a cluster that is created and destroyed
+        # by the test run". That was true of the harnesses and not of the test run, because the
+        # job called the scripts itself and the tests that call them were switched off. Running
+        # them here rather than calling the scripts directly costs nothing: it is the same three
+        # clusters and the same three harnesses, reached through the door the description names.
+        run: uv run pytest -o addopts="" -m cluster -v
+
       - name: fail if any measured outcome has changed
         run: git diff --exit-code -- docs/evidence/cluster/summary.json
-      - name: break a deploy twice and recover it two ways
-        run: scripts/measure_rollback.sh quayz-ci-rollback
       - name: fail if any recovery outcome has changed
         run: git diff --exit-code -- docs/evidence/rollback/summary.json
-      - name: edit a cluster by hand and ask two instruments about it
-        run: scripts/measure_drift.sh quayz-ci-drift
       - name: fail if either detector has changed its answer
         run: git diff --exit-code -- docs/evidence/drift/summary.json
+
       - name: the offline half, against what was just recorded
         run: >-
           uv run pytest tests/test_cluster_failures.py tests/test_rollback.py tests/test_drift.py
