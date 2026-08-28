@@ -15,7 +15,16 @@ it answers "is this process wedged", and its answer RESTARTS the container. Read
 that looks for a file: it answers "should traffic go here", and its answer only adds or removes
 an endpoint. Pointing both at the same check is the common mistake, and it turns a slow
 dependency into a restart loop of a process that was working.
+
+ASKING FOR TWO FAILURES AT ONCE IS REFUSED RATHER THAN SILENTLY HALVED. With both crashLoop and
+outOfMemory set, both blocks used to render and the second was dead code: the shell exits 1 two
+seconds in and never reaches `tail /dev/zero`. The run produced reason=Error, the caller had
+asked for an OOMKill, and nothing said so. A refusal at render time is the only place that is
+catchable without a cluster.
 */ -}}
+{{- if and .Values.failure.crashLoop .Values.failure.outOfMemory -}}
+{{- fail "failure.crashLoop and failure.outOfMemory cannot both be set: the crash loop exits before the allocation starts, so the OOMKill you asked for would never happen and the pod would report reason=Error. Ask for one at a time." -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,7 +46,12 @@ spec:
       containers:
         - name: canary
           image: {{ include "deploy-canary.image" . }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Quoted. Unquoted, `--set image.pullPolicy=y` renders a bare y, which is a YAML 1.1
+          # boolean, and the API server's deserializer rejects the object with "cannot unmarshal
+          # bool into Go struct field Container...imagePullPolicy". helm lint and helm template
+          # both called it fine; the schema's enum is what catches it now, and the quotes are
+          # what stop the next value nobody thought of from becoming a boolean.
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -69,7 +83,7 @@ spec:
               containerPort: 8080
           livenessProbe:
             httpGet:
-              path: /
+              path: {{ .Values.probes.liveness.path }}
               port: http
             initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
