@@ -170,3 +170,113 @@ def test_the_toolbox_is_not_pushed_anywhere() -> None:
     toolbox_job = workflow[workflow.index("  toolbox:") : workflow.index("  # A real Kubernetes")]
     assert "--push" not in toolbox_job, "the toolbox job pushes the image"
     assert "BUSL" in workflow, "the workflow does not say why it is not pushed"
+
+
+#: A `uses:` line, split into the action reference and whatever trails it.
+USES = re.compile(r"^\s*(?:- )?uses:\s*(\S+)\s*(#.*)?$", re.MULTILINE)
+#: The one first-party call: a reusable workflow in an account this repository's author owns.
+FIRST_PARTY = "PNX89/.github/"
+
+
+def uses() -> list[tuple[str, str]]:
+    return [(ref, trailing or "") for ref, trailing in USES.findall(WORKFLOW.read_text("utf-8"))]
+
+
+def test_every_third_party_action_is_pinned_by_commit() -> None:
+    """A tag is a pointer its owner can move, and this repository is about what you can prove.
+
+    Twelve of fourteen were floating major tags, which dependabot.yml described as "an exact
+    version". Checked per line rather than by searching the file for a hash, because a workflow
+    with one pinned action and twelve tags passes a search and fails a review.
+    """
+    lines = uses()
+    assert lines, "the workflow has no `uses:` lines at all"
+    unpinned = [
+        ref
+        for ref, _ in lines
+        if not ref.startswith(FIRST_PARTY) and not re.search(r"@[0-9a-f]{40}$", ref)
+    ]
+    assert unpinned == [], f"these actions are pinned by a movable tag: {unpinned}"
+
+
+def test_every_pin_names_the_version_it_came_from() -> None:
+    """Forty hex characters tell a reviewer nothing about what they are approving."""
+    for ref, trailing in uses():
+        if ref.startswith(FIRST_PARTY):
+            continue
+        assert trailing.strip().startswith("#") and len(trailing.strip()) > 2, (
+            f"{ref} is pinned with no version named beside it"
+        )
+
+
+def test_the_one_unpinned_call_is_the_first_party_one_and_is_a_tag_not_a_branch() -> None:
+    """A reusable workflow in an account this author owns, at an immutable tag.
+
+    Asserted rather than assumed: a pin that becomes a branch is a pin that moves, and this is
+    the only line in the file allowed to be anything other than a commit.
+    """
+    first_party = [ref for ref, _ in uses() if ref.startswith(FIRST_PARTY)]
+    assert len(first_party) == 1, f"expected one first-party call, found {first_party}"
+    tag = first_party[0].rsplit("@", 1)[1]
+    assert re.fullmatch(r"v\d+(\.\d+)*", tag), f"the shared workflow is pinned to {tag!r}"
+
+
+def test_nothing_in_the_workflow_fetches_latest() -> None:
+    """`@latest` is not a version, and two steps used it to fetch a control plane."""
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    offenders = [line.strip() for line in workflow.splitlines() if "@latest" in line]
+    assert offenders == [], f"these lines fetch whatever is newest today: {offenders}"
+
+
+def test_the_artefact_that_is_signed_is_the_artefact_that_was_compared() -> None:
+    """The job proved one digest reproducible and signed a different one.
+
+    The two comparison builds carry no attestations and the pushed build carries both, so the
+    digests were never the same object and nothing said so. The workflow now builds the pushed
+    configuration as well, pulls the image manifest out of the attested index, and fails if it
+    is not the digest the comparison proved.
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "the artefact that gets signed must be the artefact that was compared" in workflow
+    # BOTH places, counted. Asserting the string appears somewhere passed while one of the two
+    # index readings had been replaced by `select(true)`, which takes whichever entry the index
+    # happens to list first, and an attestation manifest is an entry.
+    separates = workflow.count('select(.platform.architecture != "unknown")')
+    assert separates == 2, (
+        f"the image manifest is separated from the attestation manifests in {separates} of the "
+        f"two places that read an index, so one of them compares whatever is listed first"
+    )
+    # And the push carries the exporter option, without which what lands is a third set of bytes.
+    push = workflow[workflow.index("build with an SBOM and provenance") :]
+    push = push[: push.index("- name: and what landed")]
+    assert "rewrite-timestamp=true" in push, (
+        "the pushed build does not rewrite timestamps, so its layers carry build-time mtimes "
+        "and its digest is not the one this job compared"
+    )
+
+
+def test_the_signature_is_verified_against_this_workflow_and_not_merely_this_repository() -> None:
+    """The identity regexp matched any workflow in the repository, including one added later."""
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    identity = re.search(r'--certificate-identity-regexp "([^"]+)"', workflow)
+    assert identity, "nothing verifies a certificate identity"
+    pattern = identity.group(1)
+    assert pattern.endswith("$"), f"{pattern} is unanchored, so a longer identity satisfies it"
+    assert "workflows/ci" in pattern, f"{pattern} names no workflow, so any workflow satisfies it"
+    assert "refs/heads/main" in pattern, (
+        f"{pattern} accepts a signature made from any ref, including a branch in a fork's "
+        f"pull request"
+    )
+
+
+def test_the_workflow_does_not_claim_it_needs_no_credential() -> None:
+    """It logs in to ghcr.io with GITHUB_TOKEN and publishes to a public transparency log."""
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "nothing here needs a credential." not in workflow, (
+        "the header denies needing a credential while the supply chain job authenticates to "
+        "ghcr.io and writes to Sigstore's public Rekor log"
+    )
+    assert "Rekor" in workflow, (
+        "nothing says the signature is published to a public transparency log, which is the "
+        "part a reader would want to know is permanent"
+    )

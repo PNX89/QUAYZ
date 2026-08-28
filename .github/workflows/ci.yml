@@ -1,6 +1,11 @@
 name: CI
 
-# Nothing here reaches a cloud account and nothing here needs a credential.
+# NOTHING HERE REACHES A CLOUD ACCOUNT, and one job does need a credential, which the earlier
+# version of this line denied. `supplychain` authenticates to ghcr.io with GITHUB_TOKEN, pushes
+# an image there, and publishes a signature to Sigstore's PUBLIC Rekor transparency log, where it
+# stays. All three happen only on main and all three are GitHub's own, so nothing is configured
+# and no secret is stored, but "needs no credential" was false and the distinction it was reaching
+# for is between a token this repository is given and an account somebody has to own.
 #
 # The jobs arrive as the legs do. `checks` runs the offline suite, which is everything a stranger
 # gets by cloning the repository and running pytest with nothing else installed. The cluster,
@@ -34,8 +39,8 @@ jobs:
       run:
         working-directory: controller
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: "1.27"
           cache-dependency-path: controller/go.sum
@@ -48,12 +53,12 @@ jobs:
       - name: the unit suite, against the fake clientset
         run: go test -race ./...
       - name: fetch a real control plane, once
-        run: go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use
+        run: go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1 use
       - name: resourceVersion resumption, against a real kube-apiserver
         # Behind a build tag because it needs 167 MB of kube-apiserver and etcd that a stranger
         # cloning this repository has not got. `go test ./...` stays useful for them.
         run: |
-          KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path) \
+          KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1 use -p path) \
             go test -tags envtest -v ./resume/...
 
   # The supply chain. Built twice and compared, then signed.
@@ -75,7 +80,11 @@ jobs:
   # it requires SOURCE_DATE_EPOCH to be set. Setting only the first gives a green result whenever
   # two builds land in the same second, which is intermittent and flattering.
   supplychain:
-    name: built twice, compared, then signed
+    # NAMED FOR WHAT ALWAYS RUNS. It was "built twice, compared, then signed", and on a pull
+    # request the five signing steps are all skipped by `if: github.ref == 'refs/heads/main'`, so
+    # the job reported success under a name describing work it had not done. Whoever reads a
+    # green tick on a pull request is reading the name.
+    name: built twice and compared, and signed on main
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -83,8 +92,8 @@ jobs:
       # Keyless signing needs an OIDC token. Free for a public repository.
       id-token: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: a fixed timestamp, from the commit rather than from the clock
         id: epoch
@@ -123,7 +132,7 @@ jobs:
             exit 1
           fi
 
-      - name: and the bytes on disk differ, which is why the digest is the claim
+      - name: whether the bytes on disk match is not the claim, and this says which happened
         # Two OCI tarballs can differ byte for byte while describing the identical image: tar
         # member order and the layout metadata are not part of what a digest covers. Asserting
         # the tarballs match would be asserting something stronger than reproducibility and it
@@ -135,9 +144,51 @@ jobs:
             echo "note: the tarballs differ, and the manifest digest above is what is claimed"
           fi
 
+      - name: build it a third time, with the attestations that actually get pushed
+        # THE JOB COMPARED ONE ARTEFACT AND SIGNED A DIFFERENT ONE. The two builds above are made
+        # with --provenance=false --sbom=false, and the build that is pushed and signed carries
+        # both, so the digest proved reproducible and the digest signed had never been compared
+        # to anything. The reproducibility claim and the signature were about different bytes.
+        #
+        # This builds the pushed configuration to a tarball, on every run including pull
+        # requests, and pulls the IMAGE MANIFEST out of the resulting index. An attested build
+        # produces an index: one manifest for the image and one per attestation, and the
+        # attestation manifests carry platform.architecture "unknown", which is how they are
+        # told apart. The image manifest is the thing the earlier steps proved.
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.epoch.outputs.value }}
+        run: |
+          docker buildx build controller \
+            --no-cache --provenance=mode=max --sbom=true \
+            --output type=oci,dest=/tmp/attested.tar,rewrite-timestamp=true \
+            --metadata-file /tmp/attested.json
+
+      - name: the artefact that gets signed must be the artefact that was compared
+        id: attested
+        run: |
+          set -eu
+          mkdir -p /tmp/attested && tar -xf /tmp/attested.tar -C /tmp/attested
+          blob() { echo "/tmp/attested/blobs/sha256/${1#sha256:}"; }
+          index=$(jq -r '.manifests[0].digest' /tmp/attested/index.json)
+          image=$(jq -r '
+            [.manifests[] | select(.platform.architecture != "unknown")] as $images
+            | if ($images | length) == 1 then $images[0].digest
+              else error("expected exactly one image manifest, got \($images | length)") end
+          ' "$(blob "$index")")
+          first=$(jq -r '."containerimage.digest"' /tmp/first.json)
+          echo "reproducible manifest  $first"
+          echo "manifest inside the attested index  $image"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          if [ "$image" != "$first" ]; then
+            echo "the attestations change the image manifest, so the digest this job proves" >&2
+            echo "reproducible is not the digest it signs. Narrow the claim rather than" >&2
+            echo "deleting this check: say which digest is reproducible and which is signed." >&2
+            exit 1
+          fi
+
       - name: log in to the registry
         if: github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -149,14 +200,34 @@ jobs:
         env:
           SOURCE_DATE_EPOCH: ${{ steps.epoch.outputs.value }}
         run: |
+          set -eu
+          # rewrite-timestamp=true here as well, which the earlier version omitted: without it
+          # the pushed layers carry build-time mtimes and the manifest digest is not the one
+          # every other step in this job is about.
           docker buildx build controller \
             --provenance=mode=max --sbom=true \
             --tag ghcr.io/pnx89/quayz-watch:${{ github.sha }} \
             --tag ghcr.io/pnx89/quayz-watch:latest \
-            --push --metadata-file /tmp/pushed.json
+            --output type=image,push=true,rewrite-timestamp=true \
+            --metadata-file /tmp/pushed.json
           echo "digest=$(jq -r '."containerimage.digest"' /tmp/pushed.json)" >> "$GITHUB_OUTPUT"
 
-      - uses: sigstore/cosign-installer@v3
+      - name: and what landed in the registry is what was compared here
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -eu
+          pushed=$(docker buildx imagetools inspect \
+            ghcr.io/pnx89/quayz-watch@${{ steps.push.outputs.digest }} --raw \
+            | jq -r '[.manifests[] | select(.platform.architecture != "unknown")][0].digest')
+          echo "manifest in the registry  $pushed"
+          echo "manifest compared here    ${{ steps.attested.outputs.image }}"
+          if [ "$pushed" != "${{ steps.attested.outputs.image }}" ]; then
+            echo "the registry holds a different image manifest from the one this job built" >&2
+            echo "and compared, so the signature below covers bytes nothing here checked" >&2
+            exit 1
+          fi
+
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
         if: github.ref == 'refs/heads/main'
 
       - name: sign it, keyless
@@ -167,11 +238,16 @@ jobs:
 
       - name: verify the signature this job just made
         # Signing and not verifying proves the command exited zero. This proves the signature is
-        # findable and belongs to this workflow, which is the thing a consumer would check.
+        # findable and was made by THIS WORKFLOW, which is what a consumer would check.
+        #
+        # The identity used to be `^https://github.com/PNX89/QUAYZ/`, which any workflow in this
+        # repository satisfies, including one somebody adds later. The comment claimed it proved
+        # the workflow and it proved the repository. Anchored at both ends now, and to the ref as
+        # well, because a signature made from a branch is not a signature made from main.
         if: github.ref == 'refs/heads/main'
         run: |
           cosign verify \
-            --certificate-identity-regexp "^https://github.com/PNX89/QUAYZ/" \
+            --certificate-identity-regexp "^https://github\.com/PNX89/QUAYZ/\.github/workflows/ci\.yml@refs/heads/main$" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             ghcr.io/pnx89/quayz-watch@${{ steps.push.outputs.digest }}
 
@@ -191,8 +267,8 @@ jobs:
     name: four binaries, checksummed, and an image that admits its architecture
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: build it, which is the only way to know the checksums are right
         run: |
@@ -287,19 +363,19 @@ jobs:
     name: every failure, on a cluster made and destroyed here
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         with:
           version: v3.21.4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: 1.16.0
           # The wrapper reformats stdout and this job reads exit codes off terraform.
           terraform_wrapper: false
-      - uses: helm/kind-action@v1.14.0
+      - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
           version: v0.33.0
           kubectl_version: v1.37.0
