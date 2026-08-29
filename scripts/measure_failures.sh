@@ -80,8 +80,31 @@ print("0 none none none")
 
 # The pod phase, which the taxonomy claimed separated nothing. It separates exactly one failure
 # and the measurement is what settles it.
+# THE PHASE, AND IT REFUSES TO ANSWER WHEN THE PODS DISAGREE.
+#
+# This read `.items[0]` and reported whatever kubectl listed first. With two replicas that is a
+# coin whenever the two are in different phases, and with a leaking previous release it is a coin
+# between two releases. Both are the same defect: a single value sampled from a set nobody
+# checked was uniform.
+#
+# `disagreement:` is returned rather than a phase, so a settle predicate comparing against
+# "Running" waits instead of passing, and a summary written with it in would be obviously wrong
+# rather than plausibly wrong.
 phase() {
-  k get pods -l "$SELECTOR" -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "none"
+  local seen
+  seen=$(
+    k get pods -l "$SELECTOR" -o jsonpath='{.items[*].status.phase}' 2>/dev/null |
+      tr ' ' '\n' | sort -u | paste -sd, -
+  )
+  # printf without a newline, matching what the jsonpath read emitted. `record` writes this into
+  # a transcript and adds its own blank line, so a trailing newline here puts two in the file.
+  if [ -z "$seen" ]; then
+    printf 'none'
+  elif [ "${seen#*,}" != "$seen" ]; then
+    printf 'disagreement:%s' "$seen"
+  else
+    printf '%s' "$seen"
+  fi
 }
 
 # Readiness read from the EndpointSlice conditions, NEVER from the wide output. Measured on
@@ -109,7 +132,37 @@ addresses_in_the_wide_column() {
     awk '{print $4}' | tr ',' '\n' | grep -c . || true
 }
 
-reset() { h uninstall canary >/dev/null 2>&1 || true; sleep 3; }
+# UNINSTALL AND THEN WAIT FOR THE PODS TO ACTUALLY BE GONE, which `sleep 3` did not do.
+#
+# THE RUN THAT PROVED THIS NECESSARY, and it is the second flake in this file with the same
+# shape. A footer-only pull request recorded `"phase": "Failed"` for "alive but never ready" and
+# turned the required check red. The never-ready pod cannot fail: it serves HTTP, its liveness
+# probe passes, and only its readiness file is missing.
+#
+# What it read was a pod from the PREVIOUS case. `helm uninstall` returns as soon as the API
+# server accepts the deletion, and the pods spend a few more seconds Terminating. Three seconds
+# later the next release installs, and now the label selector matches two generations at once.
+# Every observation here reads `.items[0]`, which is whichever kubectl happens to list first, so
+# `settle` could be satisfied by the new pod while `observe`, moments later, read an old one
+# whose container had just been killed and whose phase was therefore Failed.
+#
+# The predicate tightening that went in before this was correct and insufficient: it made
+# `settle` wait for the right state, and said nothing about WHICH POD it was reading.
+reset() {
+  h uninstall canary >/dev/null 2>&1 || true
+  local waited=0
+  while [ "$waited" -lt 120 ]; do
+    if [ "$(k get pods -l "$SELECTOR" --no-headers 2>/dev/null | grep -c .)" = "0" ]; then
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  echo "pods from the previous case are still present after ${waited}s, so anything measured " >&2
+  echo "now could be about either release" >&2
+  k get pods -l "$SELECTOR" -o wide >&2 || true
+  return 1
+}
 
 # WAIT FOR THE STATE THIS CASE IS ABOUT, RATHER THAN SLEEPING FOR A NUMBER SOMEBODY GUESSED.
 #
@@ -127,6 +180,17 @@ settled() {
   local what="$1" restarts term exit_code waiting
   read -r restarts term exit_code waiting <<<"$(state)"
   case "$what" in
+    healthy)
+      # The control, which `helm install --wait` already settles. It has a predicate anyway
+      # because `observe` re-checks after reading, and a control whose state is not checked is
+      # the one case where a leaked pod from a previous release would go unnoticed.
+      if [ "$restarts" = "0" ] && [ "$waiting" = "none" ] && [ "$(phase)" = "Running" ]; then
+        local up down want
+        read -r up down <<<"$(readiness)"
+        want=$(k get deploy canary-canary -o jsonpath='{.spec.replicas}' 2>/dev/null)
+        if [ "$down" = "0" ] && [ -n "$want" ] && [ "$up" = "$want" ]; then return 0; fi
+      fi
+      ;;
     backoff)
       # THREE HALVES NOW, AND THE THIRD ARRIVED AFTER A FLAKE. Waiting in backoff, a previous
       # termination to read, AND the phase this case is about.
@@ -238,27 +302,61 @@ record() {
 # hole in it is how "EndpointSlice readiness is the answer for alive but never ready" survived:
 # nobody had pointed that instrument at a crash loop, where it reads exactly the same.
 RECORDS=""
+
+# OBSERVE, THEN CHECK THE STATE HAS NOT MOVED UNDER THE OBSERVATION.
+#
+# THE FLAKE THIS CLOSES, and it is the third in this file with the same shape. A footer-only pull
+# request, changing no code at all, recorded `"phase": "Failed"` for "alive but never ready" and
+# turned the required check red on main. That pod cannot fail on its own: it serves HTTP, its
+# liveness probe passes, and the only thing missing is its readiness file.
+#
+# `settle` waits for the right state and then RETURNS, and every instrument below is a separate
+# `kubectl` call made afterwards. Anything that moves in that window is recorded as though it
+# were the settled state. The two previous fixes here both tightened the PREDICATE, which is
+# necessary and cannot close this: the gap is between the predicate passing and the reading
+# happening, not inside the predicate.
+#
+# What could move it was not reproduced on a laptop, where the pods of the previous release are
+# gone within three seconds and the never-ready pod stays Running indefinitely. A CI runner is
+# where it happened and a CI runner is under memory and disk pressure, where the kubelet evicts.
+# So this does not diagnose the cause. It refuses to WRITE a measurement taken at a moment that
+# had already moved, which is true whatever the cause turns out to be, and it names the case and
+# both states so the next occurrence arrives as a fact rather than a mystery.
 observe() {
-  local case_name="$1"
-  RECORDS="${RECORDS}${case_name}"$'\t'"$(state)"$'\t'"$(readiness)"$'\t'"$(phase)"$'\n'
+  local case_name="$1" what="$2" before after
+  before="$(phase)"
+  RECORDS="${RECORDS}${case_name}"$'\t'"$(state)"$'\t'"$(readiness)"$'\t'"${before}"$'\n'
+  after="$(phase)"
+  if [ "$before" != "$after" ]; then
+    echo "the phase moved from '$before' to '$after' while '$case_name' was being read, so the " >&2
+    echo "record just taken describes no single moment" >&2
+    k get pods -l "$SELECTOR" -o wide >&2 || true
+    return 1
+  fi
+  if ! settled "$what"; then
+    echo "'$case_name' no longer satisfies the '$what' predicate it settled into, so the record " >&2
+    echo "just taken is of a state the case is not about" >&2
+    k get pods -l "$SELECTOR" -o wide >&2 || true
+    return 1
+  fi
 }
 
 echo "==> healthy"
 produce 120s --wait
-observe "healthy"
+observe "healthy" "healthy"
 record "none, this is the control" "healthy.txt"
 
 echo "==> alive but never ready"
 produce 45s --set failure.neverReady=true
 settle unready
-observe "alive but never ready"
+observe "alive but never ready" "unready"
 NEVERREADY_WIDE=$(addresses_in_the_wide_column)
 record "alive but never ready" "alive-but-never-ready.txt"
 
 echo "==> crash loop"
 produce 45s --set failure.crashLoop=true --set replicaCount=1
 settle backoff
-observe "crash loop"
+observe "crash loop" "backoff"
 # --previous, so this reads the container that DIED rather than the one that just started. Without
 # it the count is whatever the new container had managed to print, which on a CI runner was
 # nothing at all, and "the crash loop printed no reason either" is the opposite of the claim.
@@ -268,7 +366,7 @@ record "crash loop" "crash-loop.txt"
 echo "==> killed for memory"
 produce 45s --set failure.outOfMemory=true --set replicaCount=1
 settle backoff
-observe "killed for memory"
+observe "killed for memory" "backoff"
 # --previous for the same reason, and here it makes the claim STRONGER rather than merely
 # reliable: these are the logs of the container the kernel actually killed, and they still say
 # nothing is wrong.
@@ -278,7 +376,7 @@ record "killed for memory" "killed-for-memory.txt"
 echo "==> image cannot be pulled"
 produce 45s --set failure.badImage=true --set replicaCount=1
 settle imagepull
-observe "image cannot be pulled"
+observe "image cannot be pulled" "imagepull"
 record "image cannot be pulled" "image-cannot-be-pulled.txt"
 
 # The decisive facts, and nothing that varies between runs. This is what CI diffs.

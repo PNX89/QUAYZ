@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 from typing import Any
 
 import pytest
@@ -395,4 +396,99 @@ def test_the_settle_predicates_wait_for_the_state_each_claim_is_about() -> None:
     assert "jsonpath='{.spec.replicas}'" in harness, (
         "the expected address count is no longer read from the Deployment, so it is a constant "
         "somebody will have to remember to change"
+    )
+
+
+def test_the_harness_refuses_a_reading_taken_at_a_moment_that_had_moved() -> None:
+    """THE THIRD FLAKE IN THIS HARNESS, and the first fix that is not another predicate.
+
+    A pull request changing only a README footer recorded `"phase": "Failed"` for "alive but
+    never ready" and turned the required check red on main. That pod cannot fail on its own: it
+    serves HTTP, its liveness probe passes, and the only thing missing is its readiness file.
+
+    The two previous fixes both tightened the settle predicate, and neither could close this. The
+    gap is not inside the predicate, it is AFTER it: `settle` waits for the right state and then
+    returns, and each of the four instruments is a separate `kubectl` call made afterwards.
+    Anything that moves in that window is recorded as though it were the settled state.
+
+    The cause was not reproduced on a laptop, where the previous release's pods are gone within
+    three seconds and a never-ready pod stays Running indefinitely. It happened on a CI runner,
+    which is under memory and disk pressure where the kubelet evicts. So the harness does not
+    claim a diagnosis. It refuses to WRITE a measurement taken at a moment that had already
+    moved, which holds whatever the cause turns out to be, and it names the case and both states
+    so a recurrence arrives as a fact rather than a mystery.
+
+    Verified by forcing it: making `observe` believe it had read "Running" produced
+    `the phase moved from 'Running' to 'Pending' while 'image cannot be pulled' was being read`
+    and no summary was written.
+    """
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    harness = (repo / "scripts" / "measure_failures.sh").read_text(encoding="utf-8")
+    flattened = " ".join(harness.split())
+
+    assert 'after="$(phase)"' in flattened and 'if [ "$before" != "$after" ]' in flattened, (
+        "observe no longer re-reads the phase after recording it, so a state that moves while "
+        "the four instruments are being read is written down as though it had settled"
+    )
+    assert 'if ! settled "$what"; then' in flattened, (
+        "observe no longer re-checks the predicate the case settled into, so it can record a "
+        "state the case is not about"
+    )
+
+    # Every observe call passes the predicate its case settled into, or the re-check above is
+    # comparing against nothing. Read from the call sites rather than trusted.
+    calls = re.findall(r"^observe \"([^\"]+)\" \"([^\"]+)\"$", harness, re.MULTILINE)
+    assert dict(calls) == {
+        "healthy": "healthy",
+        "alive but never ready": "unready",
+        "crash loop": "backoff",
+        "killed for memory": "backoff",
+        "image cannot be pulled": "imagepull",
+    }, f"the observe calls no longer name a predicate each: {calls}"
+
+    for _, predicate in calls:
+        assert f"    {predicate})" in harness, (
+            f"observe passes '{predicate}' and `settled` has no arm for it, so the re-check "
+            f"falls through and always fails"
+        )
+
+
+def test_the_harness_waits_for_the_previous_release_to_be_gone() -> None:
+    """`reset` was `helm uninstall; sleep 3`, which is a guess about how long deletion takes.
+
+    `helm uninstall` returns when the API server accepts the deletion, not when the pods are
+    gone, so the label selector can match two generations at once. Every instrument here reads
+    `.items[0]`, whichever kubectl lists first, so a leaked pod is not merely present: it can be
+    the one being measured.
+    """
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    harness = (repo / "scripts" / "measure_failures.sh").read_text(encoding="utf-8")
+    flattened = " ".join(harness.split())
+
+    assert "sleep 3; }" not in flattened, "reset is back to guessing a duration"
+    assert "reset() { h uninstall canary" in flattened
+    assert "pods from the previous case are still present after" in flattened, (
+        "reset no longer fails loudly when the previous release outlives its timeout, so it "
+        "would fall through into a measurement of two releases at once"
+    )
+
+
+def test_the_phase_refuses_to_answer_when_the_pods_disagree() -> None:
+    """`.items[0]` is a coin whenever two pods are in different phases.
+
+    The default is two replicas, so this is not a corner case: it is every reading of every
+    case that does not set replicaCount to one. A single value sampled from a set nobody
+    checked was uniform is the same defect as a fixed sleep, one layer along.
+    """
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    harness = (repo / "scripts" / "measure_failures.sh").read_text(encoding="utf-8")
+
+    assert "{.items[0].status.phase}" not in harness, (
+        "the phase is read from the first pod again, so it reports whichever kubectl listed "
+        "first when the pods disagree"
+    )
+    assert "{.items[*].status.phase}" in harness
+    assert "disagreement:" in harness, (
+        "a mixed set of phases no longer produces a value that fails every predicate, so it "
+        "would be sampled instead of waited out"
     )
