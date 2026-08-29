@@ -195,6 +195,8 @@ Part of the Q...Z toolset, all of it designing for the failure that does not ann
   published, and failing the build when it quietly issues another.
 - [QUASHZ](https://github.com/PNX89/QUASHZ), refusing a row whose outcome had not been decided
   yet when the decision would have been made.
+- [QUALMZ](https://github.com/PNX89/QUALMZ), a fixed number of looks at the holdout, where
+  re-running the same configuration does not buy another.
 
 **On QUILTZ.** QUILTZ argues that a plan is a real check on infrastructure code, and it is. This
 repository measures the same instrument being the wrong one: `terraform plan -detailed-exitcode`
