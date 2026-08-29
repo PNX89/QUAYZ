@@ -356,3 +356,43 @@ def test_every_entry_says_why_the_obvious_check_fails(failure: Failure) -> None:
     assert len(failure.why_the_obvious_check_fails) > 60, failure.name
     assert len(failure.told_apart_by) > 30, failure.name
     assert failure.presents_as and failure.looks_like
+
+
+def test_the_settle_predicates_wait_for_the_state_each_claim_is_about() -> None:
+    """A FLAKE FOUND BY A PULL REQUEST THAT CHANGED A README FOOTER.
+
+    Two predicates were satisfied before the state they describe had settled, so the committed
+    summary moved on a rerun that changed no code:
+
+        "phase": "Running" became "Failed" for a crash-looping pod
+        never_ready_addresses_in_the_wide_column went from 2 to 1
+
+    Both are the same mistake in different clothes: accepting a state that is ALMOST the one the
+    claim is about. A pod in CrashLoopBackOff is normally Running, and the endpoints controller
+    normally has both addresses by then, and "normally" is exactly what a predicate exists to
+    stop mattering.
+
+    This asserts the harness still waits for the whole state rather than most of it, because the
+    fix lives in a shell script that nothing else here reads.
+    """
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    harness = (repo / "scripts" / "measure_failures.sh").read_text(encoding="utf-8")
+    flattened = " ".join(harness.split())
+
+    assert '[ "$exit_code" != "none" ] &&' in flattened, (
+        "the crash-loop predicate no longer waits for the phase, so it can record whatever the "
+        "phase happened to be at that instant"
+    )
+    backoff = harness.split("backoff)")[1].split(";;")[0]
+    assert '[ "$(phase)" = "Running" ]' in backoff, (
+        "the crash-loop branch does not check the phase, so it can settle at a moment the pod "
+        "reads Failed and record that"
+    )
+    assert '[ "$notready" = "$expected" ]' in flattened, (
+        "the never-ready predicate no longer waits for every replica's address, so it records "
+        "however many the endpoints controller had added by then"
+    )
+    assert "jsonpath='{.spec.replicas}'" in harness, (
+        "the expected address count is no longer read from the Deployment, so it is a constant "
+        "somebody will have to remember to change"
+    )

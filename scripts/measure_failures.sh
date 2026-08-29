@@ -128,9 +128,20 @@ settled() {
   read -r restarts term exit_code waiting <<<"$(state)"
   case "$what" in
     backoff)
-      # Both halves: waiting in backoff AND a previous termination to read. Either alone is a
-      # moment in the cycle rather than the state this repository makes claims about.
-      if [ "$waiting" = "CrashLoopBackOff" ] && [ "$term" != "none" ] && [ "$exit_code" != "none" ]
+      # THREE HALVES NOW, AND THE THIRD ARRIVED AFTER A FLAKE. Waiting in backoff, a previous
+      # termination to read, AND the phase this case is about.
+      #
+      # The phase was left out because a pod in CrashLoopBackOff is normally Running: the pod is
+      # up and the container is restarting. That is true almost always, and "almost always" is
+      # what this predicate exists to stop mattering. A footer-only pull request, changing no
+      # code at all, recorded `"phase": "Failed"` here and turned the required check red, because
+      # the predicate was satisfied at a moment the phase had not settled.
+      #
+      # The taxonomy claims the phase separates exactly ONE failure, the image pull. That claim
+      # is only true if the crash-looping cases are Running, so the predicate now waits for the
+      # state the claim is about rather than for two thirds of it.
+      if [ "$waiting" = "CrashLoopBackOff" ] && [ "$term" != "none" ] && \
+         [ "$exit_code" != "none" ] && [ "$(phase)" = "Running" ]
       then return 0; fi
       ;;
     imagepull)
@@ -145,9 +156,19 @@ settled() {
       # Running, nothing waiting, nothing restarted, and out of the Service. ContainerCreating is
       # the state this waits past.
       if [ "$restarts" = "0" ] && [ "$waiting" = "none" ] && [ "$(phase)" = "Running" ]; then
-        local ready notready
+        local ready notready expected
         read -r ready notready <<<"$(readiness)"
-        if [ "$ready" = "0" ] && [ "$notready" -ge 1 ]; then return 0; fi
+        # EVERY REPLICA, NOT AT LEAST ONE, and `-ge 1` is what made this flake. The endpoints
+        # controller adds addresses one at a time, so a predicate satisfied by the first one
+        # records however many had appeared at that instant: the committed summary said 2 and a
+        # rerun said 1, on a pull request that changed a README footer.
+        #
+        # What the case is about is a Deployment whose every pod is running and none of them
+        # ready, so the predicate waits for as many not-ready addresses as there are pods.
+        expected=$(k get deploy canary-canary -o jsonpath='{.spec.replicas}' 2>/dev/null || echo 0)
+        if [ "$ready" = "0" ] && [ "$notready" -ge 1 ] && [ "$notready" = "$expected" ]; then
+          return 0
+        fi
       fi
       ;;
   esac
