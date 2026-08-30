@@ -319,9 +319,21 @@ def test_the_readme_admits_what_a_single_node_cluster_cannot_show() -> None:
     )
 
 
-def test_the_readme_claims_nothing_this_repository_has_not_run() -> None:
-    """The must-never-claim list, as a test rather than as a note in a planning document."""
-    text = readme().lower()
+def test_nothing_tracked_in_markdown_claims_what_this_repository_has_not_run() -> None:
+    """The must-never-claim list, checked against every published page rather than one of them.
+
+    This used to read README.md alone, so CONTRIBUTING.md, the issue templates and the ADR could
+    each make exactly the claim the README is forbidden to make and nothing here would notice.
+    An interviewer reads whatever GitHub shows them, not only the file this repository considers
+    its front door, so the check is joined to `git ls-files` rather than to one path.
+    """
+    import subprocess
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "*.md"], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout.split()
+    assert tracked, "no tracked Markdown files at all, so this checks nothing"
+
     forbidden = {
         "eks": "managed Kubernetes",
         "gke": "managed Kubernetes",
@@ -331,5 +343,10 @@ def test_the_readme_claims_nothing_this_repository_has_not_run() -> None:
         "on call": "an operational role",
         "years of kubernetes": "a length of experience",
     }
-    for phrase, why in forbidden.items():
-        assert phrase not in text, f"the README claims {why} by saying {phrase!r}"
+    violations = []
+    for relative in tracked:
+        text = (REPO / relative).read_text(encoding="utf-8").lower()
+        for phrase, why in forbidden.items():
+            if phrase in text:
+                violations.append(f"{relative} claims {why} by saying {phrase!r}")
+    assert violations == [], "\n".join(violations)

@@ -57,6 +57,16 @@ def cell(value: object) -> str:
     return str(value)
 
 
+#: How the opening line spells a small count, so the sentence reads as prose rather than a
+#: spec sheet. Mirrors tests/test_readme.py's IN_WORDS: the number this file states has to move
+#: when the data it is about does, not sit typed in a string literal nobody rechecks.
+_IN_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight"}
+
+
+def _spelled(n: int) -> str:
+    return _IN_WORDS.get(n, str(n))
+
+
 def main() -> None:
     measured = cases()
     order = ["healthy", *[failure.name for failure in FAILURES if failure.name in measured]]
@@ -70,7 +80,9 @@ def main() -> None:
         for key, label in COLUMNS
     }
 
-    print("Six instruments, five states, one cluster. Measured, not asserted.\n")
+    instruments = _spelled(len(COLUMNS)).capitalize()
+    states = _spelled(len(order))
+    print(f"{instruments} instruments, {states} states, one cluster. Measured, not asserted.\n")
     header = f"{'':<{width}}  " + "  ".join(f"{label:>{widths[key]}}" for key, label in COLUMNS)
     print(header)
     print("-" * len(header))

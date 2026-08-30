@@ -88,8 +88,16 @@ def test_the_schema_constrains_nothing_the_chart_does_not_have() -> None:
     assert not orphaned, f"the schema constrains keys values.yaml does not have: {orphaned}"
 
 
-def test_the_three_switches_are_declared_boolean_and_nothing_else() -> None:
-    """The whole reason the schema was added: "false" is a non-empty string and truthy."""
+def test_every_failure_switch_is_declared_boolean_and_nothing_else() -> None:
+    """The whole reason the schema was added: "false" is a non-empty string and truthy.
+
+    Named without a count on purpose: this was `test_the_three_switches...` when badImage was
+    a fourth switch the chart could not yet produce, and the name outlived the count the day
+    badImage joined the other three. A name is prose too, and it appears in every CI report and
+    every failure message, so a reader counting switches from a report gets the wrong answer
+    from a passing test. The set below is still spelled out, so a switch cannot be added or
+    removed without this failing for the right reason.
+    """
     switches = SCHEMA["properties"]["failure"]["properties"]
     assert set(switches) == {"neverReady", "crashLoop", "outOfMemory", "badImage"}
     for name, rule in switches.items():
