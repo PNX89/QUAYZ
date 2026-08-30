@@ -12,9 +12,12 @@ wrong instrument.**
 [![Helm v3.21.4](https://img.shields.io/badge/helm-v3.21.4-0f1689)](https://helm.sh)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Five ways a deploy ends with a pod that is not serving, each one produced against a real cluster
-that the test run creates and destroys, and each one read with six instruments. The table below
-is the whole argument. If you open one file, open [`src/quayz/failures.py`](src/quayz/failures.py).
+Four ways a deploy ends with a pod that is not serving, each one produced against a real cluster
+that the test run creates and destroys, each one read with six instruments, and all of them
+beside a healthy control. The table below is the whole argument. A fifth way of getting it wrong,
+a deploy somebody changed by hand after it landed, ends with pods that are Running and Ready and
+gets its own section further down. If you open one file, open
+[`src/quayz/failures.py`](src/quayz/failures.py).
 
 <!-- instruments:start -->
 
@@ -39,7 +42,7 @@ nobody looks at first.
 | `state.waiting.reason` | image cannot be pulled | ImagePullBackOff for the image pull, and CrashLoopBackOff for BOTH of the other two, which is the same collision one level up |
 | `EndpointSlice readiness` | **nothing** | zero endpoints ready for every failure, against two for the control. |
 | `every instrument at once, read together` | image cannot be pulled, crash loop, killed for memory, alive but never ready | every failure's row in the matrix is unique, and this is the ONLY entry here that separates the pod which is alive and never ready. |
-| `terraform plan over a helm_release` | **nothing** | exit 0, 'No changes', against a Deployment hand-scaled from two replicas to five. |
+| `terraform plan over a helm_release` | **nothing** | exit 0, 'No changes', against a Deployment hand-scaled from 2 replicas to 5. |
 | `the declared objects against the live ones` | changed by hand afterwards | exit 1 from `helm get values \| helm template \| kubectl diff` against the same hand edit the plan above could not see |
 
 Generated from `src/quayz/failures.py` and `docs/evidence/cluster/summary.json` by
@@ -120,7 +123,7 @@ Somebody scales a Deployment by hand. Every health check passes, because the clu
 it is the configuration that is no longer what anybody wrote down.
 
 `terraform plan -detailed-exitcode` over a `helm_release` exits **0** and prints "No changes" for
-a Deployment hand-scaled from two replicas to five. That is not a bug in the provider: the
+a Deployment hand-scaled from 2 replicas to 5. That is not a bug in the provider: the
 resource compares the chart and its values, and neither changed. The detector that sees it is the
 declared objects against the live ones, `helm get values | helm template | kubectl diff`, which
 exits **1** on the same edit at the same moment.
@@ -133,10 +136,10 @@ records the decision, what it rejected, and when Argo CD is the better answer.
 ## Recovering
 
 Three ways a broken rollout ends, measured in [`docs/evidence/rollback/`](docs/evidence/rollback/):
-`helm upgrade --atomic` exits 1 and leaves two of two pods ready at the previous revision; a bare
-`helm upgrade` exits 1 and leaves two ready of three total, which is the trap, because **counting
+`helm upgrade --atomic` exits 1 and leaves 2 of 2 pods ready at the previous revision; a bare
+`helm upgrade` exits 1 and leaves 2 ready of 3 total, which is the trap, because **counting
 only ready pods makes a stuck rolling update look healthy**; and `helm rollback` exits 0 and
-leaves two of two with five revisions in the history.
+leaves 2 of 2 with 5 revisions in the history.
 
 ## What this does not establish
 
@@ -207,7 +210,7 @@ Part of the Q...Z toolset, all of it designing for the failure that does not ann
 **On QUILTZ.** QUILTZ argues that a plan is a real check on infrastructure code, and it is. This
 repository measures the same instrument being the wrong one: `terraform plan -detailed-exitcode`
 over a `helm_release` exits 0 and reports no changes for a Deployment somebody hand-scaled from
-two replicas to five, because the resource compares the chart and its values and neither
+2 replicas to 5, because the resource compares the chart and its values and neither
 changed. The two are not in conflict. What a plan checks is what it was pointed at, and knowing
 which of those two situations you are in is the difference between a drift check and a habit.
 
