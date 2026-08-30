@@ -31,25 +31,6 @@ OUT="$ROOT/docs/evidence/cluster"
 CHART="$ROOT/charts/deploy-canary"
 SELECTOR="app.kubernetes.io/name=deploy-canary"
 
-for tool in kind kubectl helm; do
-  command -v "$tool" >/dev/null || { echo "$tool is not on PATH" >&2; exit 1; }
-done
-command -v python3 >/dev/null || { echo "python3 is not on PATH" >&2; exit 1; }
-mkdir -p "$OUT"
-
-cleanup() { kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true; }
-trap cleanup EXIT
-
-echo "==> creating cluster $CLUSTER"
-kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
-# THE NODE IMAGE, WHICH THE WORKFLOW PINS BY DIGEST AND WHICH NEVER REACHED A CLUSTER. The CI
-# job passed node_image to helm/kind-action alongside install_only: true, and install_only means
-# the action installs the binaries and creates nothing, so the pin was decorative: every cluster
-# any evidence here was measured on came from `kind create cluster` with no image at all. Kind's
-# own default is digest pinned in its source, so nothing was unsafe, but the workflow said it was
-# pinning something it was not. Empty is kind's default, which is what a reader gets on a laptop.
-kind create cluster --name "$CLUSTER" ${KIND_NODE_IMAGE:+--image "$KIND_NODE_IMAGE"} \
-  --wait 180s >/dev/null
 CONTEXT="kind-$CLUSTER"
 k() { kubectl --context "$CONTEXT" "$@"; }
 h() { helm --kube-context "$CONTEXT" "$@"; }
@@ -340,6 +321,41 @@ observe() {
     return 1
   fi
 }
+
+# SOURCEABLE, WHICH IS THE ONLY WAY THE PREDICATES ABOVE CAN BE EXECUTED RATHER THAN READ.
+#
+# Four tests watch the guards in this file and every assertion in all four was a substring search
+# over this source. One of them looked for the prefix the mixed-phase branch prints, and the
+# comment above `phase` explains that branch by naming the same prefix, so deleting the branch and
+# keeping the comment left the suite green. The word is deliberately not repeated here for the
+# same reason: a search for a guard's own name checks the spelling and not the guard.
+#
+# tests/test_failures.py sources this file with the variable below set, replaces `k` and `h` with
+# stubs that answer from fixtures, and then calls `phase`, `settled` and `reset` for real. Nothing
+# past this point runs in that mode, so no cluster is created and nothing is installed.
+if [ -n "${MEASURE_FAILURES_SOURCE_ONLY:-}" ]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+for tool in kind kubectl helm; do
+  command -v "$tool" >/dev/null || { echo "$tool is not on PATH" >&2; exit 1; }
+done
+command -v python3 >/dev/null || { echo "python3 is not on PATH" >&2; exit 1; }
+mkdir -p "$OUT"
+
+cleanup() { kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+echo "==> creating cluster $CLUSTER"
+kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
+# THE NODE IMAGE, WHICH THE WORKFLOW PINS BY DIGEST AND WHICH NEVER REACHED A CLUSTER. The CI
+# job passed node_image to helm/kind-action alongside install_only: true, and install_only means
+# the action installs the binaries and creates nothing, so the pin was decorative: every cluster
+# any evidence here was measured on came from `kind create cluster` with no image at all. Kind's
+# own default is digest pinned in its source, so nothing was unsafe, but the workflow said it was
+# pinning something it was not. Empty is kind's default, which is what a reader gets on a laptop.
+kind create cluster --name "$CLUSTER" ${KIND_NODE_IMAGE:+--image "$KIND_NODE_IMAGE"} \
+  --wait 180s >/dev/null
 
 echo "==> healthy"
 produce 120s --wait

@@ -5,9 +5,12 @@ name: Pages
 # The card is generated outside this repository and committed, so this workflow builds nothing:
 # no Node, no network beyond the upload, and no token beyond GITHUB_TOKEN. That is deliberate.
 # The card's content is the captured output of the real demo, and the job of proving it still
-# matches a live run belongs to tests/test_capture.py in ci.yml, which is the only place that
-# can run the demo. A publication job that also rebuilt would be a second place for the two to
-# disagree.
+# matches a live run belongs to ci.yml, which is the only place that can run the demo:
+# tests/test_capture.py re-runs the demo against docs/evidence/demo.txt, and tests/test_card.py
+# compares this page against that capture and against docs/evidence/facts.json. The second half
+# of that pair did not exist when this comment was written, so the delegation ended nowhere and
+# the one file in the repository with no check on it was the one the public reads. A publication
+# job that also rebuilt would be a second place for the two to disagree.
 #
 # Pages was enabled out of band with the REST API rather than by actions/configure-pages, whose
 # enablement input needs a token beyond GITHUB_TOKEN. That keeps the zero secrets rule.

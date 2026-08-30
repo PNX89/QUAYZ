@@ -146,6 +146,19 @@ func Container(subject Subject, status corev1.ContainerStatus, now time.Time) Fi
 		if terminated == nil {
 			continue
 		}
+		// A CLEAN EXIT IN THE PREVIOUS SLOT DECIDES NOTHING, and reading it as though it did
+		// returned the one word this package exists not to say. Every container carries a clean
+		// LastTerminationState after any restart whose process exited zero: a server that traps
+		// SIGTERM and shuts down tidily after a liveness restart, a shell entrypoint that
+		// finished, anything that called exit(0). Returning here skipped the running-and-not-ready
+		// check below, so a container running and unready for hours came back healthy, and
+		// Healthy is not Interesting, so watch.Run reported it to nobody. A clean exit is
+		// evidence that nothing failed, not evidence about whether the container is serving now.
+		clean := terminated.Reason != "OOMKilled" && terminated.ExitCode == 0
+		current := terminated == status.State.Terminated
+		if clean && !current {
+			break
+		}
 		finding.Reason = terminated.Reason
 		finding.ExitCode = terminated.ExitCode
 		if terminated.Reason == "OOMKilled" {
@@ -156,8 +169,9 @@ func Container(subject Subject, status corev1.ContainerStatus, now time.Time) Fi
 			finding.Verdict = CrashLooping
 			return finding
 		}
-		// Exited zero. A completed container is not a failure, and looking at the previous
-		// termination after a clean one would report a pod that has since recovered.
+		// Exited zero and terminated right now. A completed container is not a failure, and
+		// looking at the previous termination after a clean current one would report a pod that
+		// has since recovered.
 		finding.Verdict = Healthy
 		return finding
 	}

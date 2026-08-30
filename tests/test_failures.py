@@ -6,8 +6,10 @@ field which separates them is named, and that every one of those claims is a rea
 real cluster rather than a sentence somebody was confident about.
 
 THE JOIN IS THE POINT OF THIS FILE. Every entry in DETECTORS is checked against
-`docs/evidence/cluster/summary.json`, which records the same six instruments pointed at all five
-failures and at a healthy control. Before that join existed, three of the six entries were wrong,
+`docs/evidence/cluster/summary.json`, which records the same six instruments pointed at the four
+failures a cluster produces and at a healthy control. Five is the taxonomy's size and not the
+matrix's, and MEASURED_ON_A_CLUSTER below is the difference between them. Before that join
+existed, three of the six entries were wrong,
 and every one of them was wrong in the direction that flattered the taxonomy:
 
   lastState.terminated.reason was credited with the image pull, which has no terminated state
@@ -21,8 +23,10 @@ asserting every failure had an answer was green because of a false one.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import re
+import subprocess
 from typing import Any
 
 import pytest
@@ -57,6 +61,83 @@ def cases() -> dict[str, dict[str, Any]]:
     loaded: dict[str, Any] = json.loads((EVIDENCE / "summary.json").read_text(encoding="utf-8"))
     found: dict[str, dict[str, Any]] = loaded["cases"]
     return found
+
+
+HARNESS = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "measure_failures.sh"
+
+#: scripts/measure_failures.sh with the cluster replaced by fixtures, so its predicates are RUN
+#: rather than searched for. Everything they read goes through `k`, so replacing that one function
+#: is the whole of the outside world as far as they are concerned. `sleep` goes with it: `reset`
+#: waits two minutes for the previous release to disappear, which is right on a cluster and would
+#: be two minutes of a unit suite.
+PROBE = r"""
+set -uo pipefail
+export MEASURE_FAILURES_SOURCE_ONLY=1
+# shellcheck source=/dev/null
+. "$HARNESS"
+set +e
+
+k() {
+  case "$*" in
+    *endpointslice*) printf '%s\n' "$STUB_SLICES" ;;
+    *status.phase*)  printf '%s'   "$STUB_PHASES" ;;
+    *spec.replicas*) printf '%s'   "$STUB_REPLICAS" ;;
+    *--no-headers*)  printf '%s'   "$STUB_PODLINES" ;;
+    *)               printf '%s\n' "$STUB_PODS" ;;
+  esac
+}
+h() { :; }
+sleep() { :; }
+"""
+
+
+def pod(
+    restarts: int = 0,
+    terminated: str | None = None,
+    exit_code: int | None = None,
+    waiting: str | None = None,
+) -> str:
+    """One pod as `kubectl get pods -o json` prints it, carrying the four fields `state` reads."""
+    status: dict[str, Any] = {"restartCount": restarts}
+    if terminated is not None:
+        status["lastState"] = {"terminated": {"reason": terminated, "exitCode": exit_code}}
+    if waiting is not None:
+        status["state"] = {"waiting": {"reason": waiting}}
+    return json.dumps({"items": [{"status": {"containerStatuses": [status]}}]})
+
+
+def endpoints(ready: int, not_ready: int) -> str:
+    """An EndpointSlice as `readiness` reads it, which is the conditions and never the wide row."""
+    entries = [{"conditions": {"ready": True}} for _ in range(ready)]
+    entries += [{"conditions": {"ready": False}} for _ in range(not_ready)]
+    return json.dumps({"items": [{"endpoints": entries}]})
+
+
+def probe(call: str, **stubs: str) -> subprocess.CompletedProcess[str]:
+    """Source the harness with fixtures for a cluster, then run one of its functions for real.
+
+    THE REASON THIS EXISTS RATHER THAN ANOTHER SUBSTRING SEARCH. Every assertion the four tests
+    below started with was a search over the harness's source, and one of them was satisfied by
+    the comment sitting above the branch it was watching: delete the branch, keep the comment,
+    suite green. Searching a file for a guard's name proves how it is spelled. These call it.
+    """
+    environment = {
+        **os.environ,
+        "HARNESS": str(HARNESS),
+        "STUB_PHASES": "Running",
+        "STUB_REPLICAS": "2",
+        "STUB_PODLINES": "",
+        "STUB_PODS": pod(),
+        "STUB_SLICES": endpoints(ready=2, not_ready=0),
+        **stubs,
+    }
+    return subprocess.run(
+        ["bash", "-c", f"{PROBE}\n{call}"],
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=120,
+    )
 
 
 def by_name(name: str) -> Failure:
@@ -479,16 +560,88 @@ def test_the_phase_refuses_to_answer_when_the_pods_disagree() -> None:
     The default is two replicas, so this is not a corner case: it is every reading of every
     case that does not set replicaCount to one. A single value sampled from a set nobody
     checked was uniform is the same defect as a fixed sleep, one layer along.
-    """
-    repo = pathlib.Path(__file__).resolve().parents[1]
-    harness = (repo / "scripts" / "measure_failures.sh").read_text(encoding="utf-8")
 
-    assert "{.items[0].status.phase}" not in harness, (
-        "the phase is read from the first pod again, so it reports whichever kubectl listed "
-        "first when the pods disagree"
-    )
-    assert "{.items[*].status.phase}" in harness
-    assert "disagreement:" in harness, (
+    RUN RATHER THAN READ, WHICH IS THE SECOND CORRECTION THIS TEST HAS TAKEN. It used to search
+    the harness for the prefix the mixed branch prints, and the comment explaining that branch
+    names the same prefix, so the whole branch could be deleted with this test still green. It
+    calls `phase` now, against pods whose phases disagree, and reads what comes back.
+    """
+    mixed = probe("phase", STUB_PHASES="Pending Running")
+    assert mixed.stdout == "disagreement:Pending,Running", (
         "a mixed set of phases no longer produces a value that fails every predicate, so it "
-        "would be sampled instead of waited out"
+        f"would be sampled instead of waited out: {mixed.stdout!r} {mixed.stderr[-400:]}"
+    )
+    agreed = probe("phase", STUB_PHASES="Running Running")
+    assert agreed.stdout == "Running", (
+        f"two pods that agree no longer read as one phase: {agreed.stdout!r}"
+    )
+    absent = probe("phase", STUB_PHASES="")
+    assert absent.stdout == "none", (
+        f"no pods at all reads as an empty string, which compares equal to nothing: "
+        f"{absent.stdout!r}"
+    )
+
+
+def test_the_crash_loop_predicate_refuses_a_phase_that_had_not_settled() -> None:
+    """THE FLAKE, EXECUTED. A footer-only pull request recorded `"phase": "Failed"` here.
+
+    The three halves of the backoff predicate are waiting in backoff, a previous termination to
+    read, and the phase this case is about. The test that watched them searched the harness for
+    their text, so an early `return 0` at the top of `settled` left every predicate vacuously
+    true and the suite green. This one asks the predicate, with the phase moved and everything
+    else right.
+    """
+    crashing = pod(restarts=2, terminated="Error", exit_code=1, waiting="CrashLoopBackOff")
+    settled = probe("settled backoff", STUB_PODS=crashing, STUB_PHASES="Running")
+    assert settled.returncode == 0, (
+        f"the crash loop this repository measures no longer satisfies its own predicate: "
+        f"{settled.stderr[-400:]}"
+    )
+    moved = probe("settled backoff", STUB_PODS=crashing, STUB_PHASES="Failed")
+    assert moved.returncode != 0, (
+        "the crash-loop predicate accepts a pod that reads Failed, so it can record whatever "
+        "the phase happened to be at that instant, which is the flake this fix was for"
+    )
+
+
+def test_the_never_ready_predicate_waits_for_every_replicas_address() -> None:
+    """`-ge 1` is what made this flake, and the count comes off the Deployment rather than a 2.
+
+    The endpoints controller adds addresses one at a time, so a predicate satisfied by the first
+    records however many had appeared at that instant: the committed summary said 2 and a rerun
+    said 1. The third case below is the half a text search cannot reach at all, because a
+    hard-coded 2 and a value read from `.spec.replicas` are the same characters in a summary.
+    """
+    every = probe("settled unready", STUB_SLICES=endpoints(ready=0, not_ready=2))
+    assert every.returncode == 0, (
+        f"every replica out of the Service no longer settles the case: {every.stderr[-400:]}"
+    )
+    partial = probe("settled unready", STUB_SLICES=endpoints(ready=0, not_ready=1))
+    assert partial.returncode != 0, (
+        "one address out of two satisfies the never-ready predicate, so it records however many "
+        "the endpoints controller had added by then"
+    )
+    three = probe("settled unready", STUB_SLICES=endpoints(ready=0, not_ready=3), STUB_REPLICAS="3")
+    assert three.returncode == 0, (
+        "a three-replica Deployment with three unready addresses does not settle, so the count "
+        "is a constant somebody will have to remember to change rather than the Deployment's own"
+    )
+
+
+def test_reset_fails_rather_than_measuring_two_releases_at_once() -> None:
+    """`helm uninstall; sleep 3` is a guess about how long deletion takes, and it was wrong.
+
+    The test that replaced it asserted the guessed duration was absent from the source, which
+    `sleep 3; return 0` evades while doing exactly the same thing. This runs `reset` instead,
+    against pods that never go away, and requires it to fail loudly.
+    """
+    gone = probe("reset", STUB_PODLINES="")
+    assert gone.returncode == 0, f"reset never returns on a clean cluster: {gone.stderr[-400:]}"
+    lingering = probe("reset", STUB_PODLINES="canary-canary-59d 1/1 Terminating 4s")
+    assert lingering.returncode != 0, (
+        "reset returns success while the previous release's pods are still listed, so the next "
+        "case is measured with two generations matching the same selector"
+    )
+    assert "still present after" in lingering.stderr, (
+        f"reset fails silently, so the run stops with nothing saying why: {lingering.stderr!r}"
     )
