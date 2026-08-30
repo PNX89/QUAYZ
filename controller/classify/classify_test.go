@@ -269,3 +269,24 @@ func TestOnlyHealthyAndStartingAreUninteresting(t *testing.T) {
 		t.Fatal("an unrecognised verdict is silently uninteresting, which is how a new failure is missed")
 	}
 }
+
+// A PREVIOUS CLEAN EXIT SAYS NOTHING ABOUT WHETHER THE CONTAINER IS SERVING NOW, and reading it
+// as though it did returned the one word this package exists not to say. Any container restarted
+// after its process exited zero carries this: a server that traps SIGTERM and exits cleanly after
+// a liveness restart, a shell entrypoint that finished, a process that called exit(0). The
+// running-and-not-ready check below the loop never ran, so the failure a dashboard already shows
+// green was reported as healthy, and Healthy is not Interesting, so watch.Run said nothing at all.
+func TestAPreviousCleanExitDoesNotHideAContainerThatIsRunningAndNeverReady(t *testing.T) {
+	status := running(ReadyGrace+time.Minute, false)
+	status.LastTerminationState = corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{Reason: "Completed", ExitCode: 0},
+	}
+
+	finding := Container(subject(), status, now)
+	if finding.Verdict != NeverReady {
+		t.Fatalf("got %q for a container running and not ready for a minute past the grace", finding.Verdict)
+	}
+	if !finding.Verdict.Interesting() {
+		t.Fatal("the verdict is not interesting, so watch.Run reports this pod to nobody")
+	}
+}

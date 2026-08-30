@@ -32,6 +32,32 @@ def readme() -> str:
     return README.read_text(encoding="utf-8")
 
 
+def section(heading: str) -> str:
+    """One section of the README, whitespace normalised.
+
+    Found by its heading rather than by line number, and normalised for the reason recorded in
+    the module docstring above: a claim's presence must not depend on where somebody's editor
+    broke the line.
+    """
+    text = readme()
+    start = text.index(heading)
+    end = text.find("\n## ", start + len(heading))
+    return " ".join(text[start : end if end != -1 else len(text)].split())
+
+
+def figures(clause: str, pattern: str, what: str) -> tuple[int, ...]:
+    """The numbers one sentence carries, found by the phrase that carries them.
+
+    NOT `str(value) in text`, WHICH IS HOW THE ASSERTION BELOW CAME TO BE SATISFIED BY A BADGE.
+    A page long enough to be worth checking contains any single digit somewhere: this README's
+    only two 5 characters are a hex colour in a shields.io URL and a Kubernetes version, and
+    neither is about replicas, so the check passed while the sentence said fifty.
+    """
+    found = re.search(pattern, clause)
+    assert found, f"the README no longer says {what}. Read from: {clause!r}"
+    return tuple(int(group) for group in found.groups())
+
+
 def cases() -> dict[str, dict[str, object]]:
     loaded = json.loads((EVIDENCE / "cluster" / "summary.json").read_text(encoding="utf-8"))
     found: dict[str, dict[str, object]] = loaded["cases"]
@@ -79,6 +105,43 @@ def test_the_first_screenful_names_the_pair_the_whole_repository_is_about() -> N
     assert "memory" in opening, "the opening does not name the failure it is contrasted with"
     assert "kubectl get pods" in opening, (
         "the opening does not say WHERE they look the same, which is the whole claim"
+    )
+
+
+#: How the opening may write a count: the word, or the digit. A README that opens with a numeral
+#: reads like a spec sheet, so the sentence spells the number and this spells it back, which is
+#: the whole of the translation needed to compare a claim against a set. Both spellings are
+#: accepted, so a rewrite that prefers one is not a red build about typography.
+IN_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven"}
+
+
+def test_the_opening_counts_the_failures_that_were_actually_measured() -> None:
+    """FIVE STATES ARE NOT FIVE FAILURES, and the opening said they were.
+
+    The matrix holds five cases and one of them is the healthy control, so four failures were
+    produced against a cluster and read with six instruments. The fifth entry in the taxonomy, a
+    deploy changed by hand afterwards, is produced by a different harness against a healthy
+    cluster and is not a pod that stops serving at all: its own row says Running and Ready. The
+    opening welded the two counts together and reached the wrong one either way, because reading
+    it as the table's five rows counts the control as a failure.
+
+    Recomputed from the evidence and compared against the sentence that carries the claim, so
+    the two cannot drift apart again and neither can be fixed without the other going red.
+    """
+    measured = sorted(set(cases()) - {"healthy"})
+    assert measured, "the cluster summary holds nothing but the control, so this compares nothing"
+
+    opening = " ".join("\n".join(readme().splitlines()[:20]).split())
+    carrier = re.search(r"(\w+) ways a deploy ends with a pod that is not serving", opening)
+    assert carrier, (
+        "the opening no longer says how many ways a deploy ends with a pod that is not serving, "
+        "which is the claim the whole table is underneath"
+    )
+    said = carrier.group(1).lower()
+    assert said in {IN_WORDS.get(len(measured), str(len(measured))), str(len(measured))}, (
+        f"the opening says {said} ways a deploy ends with a pod that is not serving, and the "
+        f"cluster produced {len(measured)}: {measured}. The healthy control is not a failure and "
+        f"the hand edit is not a pod that stopped serving."
     )
 
 
@@ -138,7 +201,79 @@ def test_the_readme_numbers_are_the_ones_the_cluster_produced() -> None:
         "the README says a plan over helm_release exits 0 on a hand edit, and it no longer does"
     )
     assert drift["after_hand_edit_kubectl_diff_exit"] != 0
-    assert str(drift["hand_scaled_to"]) in text, "the README does not say what it was scaled to"
+
+    # THE SENTENCE, NOT THE DIGIT. This was `str(drift["hand_scaled_to"]) in text`, which is
+    # `"5" in text` over the whole file, and the README's only two 5 characters are a badge's
+    # hex colour and a Kubernetes version. The scale is read out of the sentence that makes the
+    # claim now, which is also why the README writes it as a digit rather than as a word.
+    scaled = figures(
+        section("## Drift is a different question"),
+        r"hand-scaled from (\d+) replicas to (\d+)",
+        "what the Deployment was hand-scaled from and to",
+    )
+    assert scaled[1] == drift["hand_scaled_to"], (
+        f"the drift section says it was scaled to {scaled[1]} and the harness scaled it to "
+        f"{drift['hand_scaled_to']}"
+    )
+
+
+def test_the_readme_recovery_numbers_are_the_ones_the_rollback_harness_produced() -> None:
+    """The third summary, which nothing here read.
+
+    THE CONTRACT REPORTED ITSELF SATISFIED WHILE A WHOLE SECTION WAS JOINED TO NOTHING. The test
+    above reads the cluster and drift summaries; docs/evidence/rollback/summary.json was opened
+    by no test at all, so every figure in the Recovering section was prose sitting beside a
+    measurement nobody compared it to. The section could say `--atomic` exits 0, which is the
+    reversal of the sentence the rollback harness exists to prove, and the suite stayed green.
+
+    Worse than an ordinary drift risk, because scripts/measure_rollback.sh regenerates that file
+    on a cluster run: these numbers are EXPECTED to move, and when they moved the README would
+    not have.
+
+    Each figure is read from the clause that carries it rather than searched for in the page.
+    """
+    measured = json.loads((EVIDENCE / "rollback" / "summary.json").read_text(encoding="utf-8"))
+    clauses = section("## Recovering").split(";")
+
+    def carrying(command: str) -> str:
+        found = [clause for clause in clauses if command in clause]
+        assert len(found) == 1, (
+            f"{command!r} names {len(found)} clauses of the Recovering section, so there is no "
+            "one sentence to compare the figures against"
+        )
+        return found[0]
+
+    atomic = carrying("--atomic")
+    assert figures(atomic, r"exits (\d+)", "what an atomic upgrade exits") == (
+        measured["atomic_upgrade_exit_code"],
+    )
+    assert figures(atomic, r"(\d+) of (\d+) pods ready", "what an atomic upgrade leaves") == (
+        measured["atomic_pods_ready_afterwards"],
+        measured["atomic_pods_total_afterwards"],
+    )
+
+    bare = carrying("a bare")
+    assert figures(bare, r"exits (\d+)", "what a bare upgrade exits") == (
+        measured["bare_upgrade_exit_code"],
+    )
+    # The trap itself: ready and total are different numbers here, and a check that only counted
+    # ready pods would call this healthy. That is the sentence, so both are compared.
+    assert figures(bare, r"(\d+) ready of (\d+) total", "what a bare upgrade leaves") == (
+        measured["pods_ready_while_the_broken_revision_stood"],
+        measured["pods_total_while_the_broken_revision_stood"],
+    )
+
+    rollback = carrying("`helm rollback`")
+    assert figures(rollback, r"exits (\d+)", "what a rollback exits") == (
+        measured["rollback_exit_code"],
+    )
+    assert figures(rollback, r"(\d+) of (\d+)", "what a rollback leaves") == (
+        measured["pods_ready_after_the_rollback"],
+        measured["pods_total_after_the_rollback"],
+    )
+    assert figures(rollback, r"(\d+) revisions", "how many revisions the history holds") == (
+        measured["revisions_in_the_history"],
+    )
 
 
 def test_every_path_and_link_in_the_readme_resolves() -> None:

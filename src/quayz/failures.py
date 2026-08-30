@@ -1,9 +1,14 @@
 """The ways a deploy goes wrong, as data, and what actually tells them apart.
 
-THE ARGUMENT THIS REPOSITORY IS BUILT ON. Every one of these ends with a pod that is not serving
-traffic, and to a reader of `kubectl get pods` several of them look the same. They are not the
-same, they are found by different mechanisms, and the expensive mistake is not failing to notice
-a bad deploy: it is noticing and reaching for the wrong instrument.
+THE ARGUMENT THIS REPOSITORY IS BUILT ON. Four of the five below end with a pod that is not
+serving traffic, and to a reader of `kubectl get pods` several of them look the same. They are
+not the same, they are found by different mechanisms, and the expensive mistake is not failing to
+notice a bad deploy: it is noticing and reaching for the wrong instrument.
+
+The fifth, a deploy changed by hand afterwards, ends with pods that are Running and Ready, and
+saying so is the point of it: health is the wrong question to ask about that one. This paragraph
+used to say every one of these ended with a pod that was not serving, which that entry's own
+`presents_as` denies in this same file.
 
 An OOMKill and a crash loop both show `CrashLoopBackOff` and a non-zero restart count. The logs
 of an OOMKilled container end mid-sentence with no error in them, because the kernel took the
@@ -18,9 +23,11 @@ the failure mode is a deploy that looks healthy while serving nothing.
 
 AND THE INSTRUMENT TABLE BELOW IS JOINED TO A MEASUREMENT, which it was not. Every entry in
 DETECTORS is checked by tests/test_failures.py against docs/evidence/cluster/summary.json, where
-the same six instruments are pointed at all five failures and at a healthy control. Three of the
-six entries were wrong before that join existed, and all three were wrong in the direction that
-flattered this file:
+the same six instruments are pointed at the FOUR failures a cluster produces and at a healthy
+control. The count used to read five, which is the taxonomy's size rather than the matrix's, and
+the matrix holds five cases only because one of them is the control. Three of the six entries
+were wrong before that join existed, and all three were wrong in the direction that flattered
+this file:
 
   lastState.terminated.reason was credited with the image pull, which has NO terminated state at
     all, and it was the only entry naming that failure. The test asserting every failure had an
@@ -268,8 +275,8 @@ DETECTORS: tuple[Detector, ...] = (
         fields=(),
         notices=(),
         separates=(),
-        measured="exit 0, 'No changes', against a Deployment hand-scaled from two replicas to "
-        "five. The resource compares the chart and its values, and neither had changed",
+        measured="exit 0, 'No changes', against a Deployment hand-scaled from 2 replicas to 5. "
+        "The resource compares the chart and its values, and neither had changed",
     ),
     Detector(
         name="the declared objects against the live ones",
