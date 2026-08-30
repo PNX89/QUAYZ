@@ -210,9 +210,9 @@ Part of the Q...Z toolset, all of it designing for the failure that does not ann
 **On QUILTZ.** QUILTZ argues that a plan is a real check on infrastructure code, and it is. This
 repository measures the same instrument being the wrong one: `terraform plan -detailed-exitcode`
 over a `helm_release` exits 0 and reports no changes for a Deployment somebody hand-scaled from
-2 replicas to 5, because the resource compares the chart and its values and neither
-changed. The two are not in conflict. What a plan checks is what it was pointed at, and knowing
-which of those two situations you are in is the difference between a drift check and a habit.
+2 replicas to 5, because the resource compares the chart and its values and neither changed. The
+two are not in conflict. What a plan checks is what it was pointed at, and knowing which of
+those two situations you are in is the difference between a drift check and a habit.
 
 <!-- toolset:end -->
 
