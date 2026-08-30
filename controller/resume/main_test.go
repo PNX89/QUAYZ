@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -42,17 +43,18 @@ func TestMain(m *testing.M) {
 		environment.BinaryAssetsDirectory = filepath.Clean(assets)
 	}
 
-	stopped := make(chan struct{})
+	// sync.Once, not a select/close guard: the guard this replaced was two non-atomic steps,
+	// a channel read and a channel close, and two goroutines can both pass the read before
+	// either reaches the close. Racing that exact idiom with two concurrent callers, 2000
+	// rounds under -race, panicked on the first round with "close of closed channel". Once.Do
+	// has no such window.
+	var once sync.Once
 	stop := func() {
-		select {
-		case <-stopped:
-			return
-		default:
-			close(stopped)
-		}
-		if err := environment.Stop(); err != nil {
-			fmt.Fprintf(os.Stderr, "stopping envtest: %v\n", err)
-		}
+		once.Do(func() {
+			if err := environment.Stop(); err != nil {
+				fmt.Fprintf(os.Stderr, "stopping envtest: %v\n", err)
+			}
+		})
 	}
 
 	// A signal handler, because Ctrl-C during a slow test is the ordinary way this leaks.
@@ -68,6 +70,11 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "starting envtest: %v\n", err)
 		fmt.Fprintln(os.Stderr, "fetch the binaries: setup-envtest use, then set KUBEBUILDER_ASSETS")
+		// Start returns errors from six places AFTER startControlPlane has already brought
+		// etcd and kube-apiserver up: provisioning the admin user, the KubeConfig, this
+		// deadline, and the webhook and CRD installation steps. Every one of those leaves
+		// exactly the pair of processes this file exists to reap unless stop runs here too.
+		stop()
 		os.Exit(1)
 	}
 	config = started

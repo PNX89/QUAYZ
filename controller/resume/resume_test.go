@@ -177,10 +177,13 @@ func TestCountingListCallsWouldProveNothing(t *testing.T) {
 
 	// This is the point rather than an incidental observation: on a default client the initial
 	// state arrives through the watch, so List is not the instrument. If a future client-go
-	// changes that default this test will start failing, and the comment above the recorder
-	// needs rewriting rather than this assertion relaxing.
+	// changes that default this test starts failing, and the comment above the recorder needs
+	// rewriting rather than this assertion relaxing. t.Fatalf, not t.Skipf: a skip reports as a
+	// pass and exits 0, which is the outcome pyproject.toml's own marker comment names as the
+	// reason a skip is the wrong tool. A default that quietly changed back to calling List
+	// belongs in CI's face, not in verbose output nobody reads.
 	if len(lists) > 0 {
-		t.Skipf(
+		t.Fatalf(
 			"this client-go called List %d times, so WatchListClient is no longer defaulting on. "+
 				"The resumption test above is still correct; the explanation of why List is a "+
 				"useless instrument needs updating", len(lists),

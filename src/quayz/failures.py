@@ -290,10 +290,17 @@ DETECTORS: tuple[Detector, ...] = (
 
 
 def confusable_with(name: str) -> tuple[str, ...]:
-    """The other failures that share this one's `looks_like`.
+    """The other failures that share this one's `presents_as`, NOT its `looks_like`.
 
     Derived from the taxonomy rather than listed separately, so a sixth failure that happens to
     look like an existing one joins the confusable set without anybody remembering to say so.
+
+    `presents_as` is deliberately the key and `looks_like` deliberately is not. They read as
+    synonyms and are not: `presents_as` is the canonical symptom string, written to be equal
+    across a confusable pair, while `looks_like` is the same symptom in a sentence for a reader,
+    and two sentences that describe the same thing are not required to be the same string. This
+    function used to compare `looks_like`, found no pairs at all, and that is the bug
+    `presents_as`'s own field comment was written to prevent from happening again.
     """
     subject = next(failure for failure in FAILURES if failure.name == name)
     return tuple(

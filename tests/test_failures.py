@@ -148,11 +148,16 @@ def detector(name: str) -> Detector:
     return next(entry for entry in DETECTORS if entry.name == name)
 
 
-def test_every_failure_is_here_and_the_count_is_asserted() -> None:
-    """Five, and the count is asserted so a sixth has to be added on purpose.
+def test_every_failure_and_detector_is_here_and_the_counts_are_asserted() -> None:
+    """Five failures and nine detectors, and both counts are asserted so a change is deliberate.
 
-    The set is spelled out rather than counted alone, because a count goes on passing when one
-    entry is swapped for another.
+    Both sets are spelled out rather than counted alone, because a count goes on passing when
+    one entry is swapped for another. DETECTORS is the second half, added after deleting the
+    entire `state.waiting.reason` row left every test in this file green: JOINED and UNJOINED
+    are both derived from DETECTORS, so a missing row shrinks the parametrised sets rather than
+    failing one of them, and nothing else in this file names an instrument that is not here. The
+    gap only surfaced two files away, in test_capture.py and test_readme.py, over a total that
+    moved for a reason neither file could say.
     """
     assert {failure.name for failure in FAILURES} == {
         "image cannot be pulled",
@@ -162,6 +167,19 @@ def test_every_failure_is_here_and_the_count_is_asserted() -> None:
         "changed by hand afterwards",
     }
     assert len(FAILURES) == 5
+
+    assert {entry.name for entry in DETECTORS} == {
+        "restart count",
+        "container logs",
+        "pod phase",
+        "lastState.terminated.reason with exitCode",
+        "state.waiting.reason",
+        "EndpointSlice readiness",
+        "every instrument at once, read together",
+        "terraform plan over a helm_release",
+        "the declared objects against the live ones",
+    }
+    assert len(DETECTORS) == 9
 
 
 def test_every_failure_the_harness_produces_is_in_the_taxonomy_by_the_same_name() -> None:
@@ -177,10 +195,27 @@ def test_a_crash_loop_and_an_oomkill_are_indistinguishable_by_symptom() -> None:
 
     They share `presents_as` exactly, which is the point: CrashLoopBackOff and a climbing
     restart count is what both produce, and it is what a person sees first.
+
+    ALSO GUARDS confusable_with's OWN DOCSTRING, which named `looks_like` here once, though the
+    function has always compared `presents_as`. Checked both ways: the docstring is read for the
+    field it actually claims, and `looks_like` is shown to disagree for this very pair, which is
+    exactly the derivation a reader who trusted the old docstring and "fixed" the code to match
+    it would have broken.
     """
     assert by_name("crash loop").presents_as == by_name("killed for memory").presents_as
     assert confusable_with("crash loop") == ("killed for memory",)
     assert confusable_with("killed for memory") == ("crash loop",)
+
+    doc = confusable_with.__doc__ or ""
+    assert "presents_as" in doc.splitlines()[0], (
+        "confusable_with's docstring no longer names the field it actually compares"
+    )
+    crash = by_name("crash loop")
+    oom = by_name("killed for memory")
+    assert crash.looks_like != oom.looks_like, (
+        "looks_like now agrees for the confusable pair, so it no longer demonstrates why "
+        "confusable_with must stay keyed on presents_as instead"
+    )
 
 
 def test_the_symptom_they_share_is_the_one_the_cluster_produced() -> None:
@@ -191,6 +226,13 @@ def test_the_symptom_they_share_is_the_one_the_cluster_produced() -> None:
     assert crash["restarted"] is True and oom["restarted"] is True
     assert "CrashLoopBackOff" in by_name("crash loop").presents_as
     assert "CrashLoopBackOff" in by_name("killed for memory").presents_as
+
+    # looks_like is the sentence a reader gets rather than the derivation key, and it carried no
+    # assertion beyond being non-empty: a mutation replacing it with "x" left the suite green.
+    # It is what a person sees in `kubectl get pods`, which is the whole reason this pair is the
+    # repository's argument, so the one fact worth pinning is that it says so for both of them.
+    assert "CrashLoopBackOff" in by_name("crash loop").looks_like
+    assert "CrashLoopBackOff" in by_name("killed for memory").looks_like
 
 
 def test_confusability_is_symmetric() -> None:
@@ -230,16 +272,14 @@ def test_each_instrument_separates_exactly_what_the_cluster_says_it_separates(
     """SEPARATING IS NOT NOTICING, and conflating them is how this table came to flatter itself.
 
     An instrument separates a failure when, among the ones it notices, that one's reading is its
-    own. The restart count is the interesting exception: it notices two and reads 2 and 3, which
-    are different numbers and not different kinds, so it separates neither. The comparison below
-    would call those separated, so that entry is handled on its own terms and the reasoning
-    lives in its `measured` field rather than in a special case nobody reads.
+    own. The restart count used to be carved out here as "the interesting exception", reasoning
+    that it notices two and reads 2 and 3, which are different numbers and not different kinds.
+    That is not what the join below sees: `restarted` is recorded as a boolean, precisely so the
+    count cannot leak into the comparison, and both crash loop and the OOMKill read `True`. The
+    generic comparison already computes an empty separates set for it, matching the declared
+    `()`, so the carve-out was removing coverage from the one entry it claimed needed protecting
+    from a comparison that in fact agreed with it.
     """
-    if entry.name == "restart count":
-        assert entry.separates == ()
-        assert "how long the harness waited" in entry.measured
-        return
-
     readings = {name: reading(entry, cases()[name]) for name in entry.notices}
     unique = {name for name, value in readings.items() if list(readings.values()).count(value) == 1}
     assert unique == set(entry.separates), (
@@ -437,7 +477,14 @@ def test_every_entry_says_why_the_obvious_check_fails(failure: Failure) -> None:
     """The field that makes this a taxonomy rather than a list of things that can go wrong."""
     assert len(failure.why_the_obvious_check_fails) > 60, failure.name
     assert len(failure.told_apart_by) > 30, failure.name
-    assert failure.presents_as and failure.looks_like
+    # what_happens and looks_like used to be asserted only for truthiness, which any non-empty
+    # string satisfies: a mutation replacing every value of both fields with "x" left the suite
+    # green, including for "CrashLoopBackOff and a climbing restart count, identical to a crash
+    # loop", the sentence this repository's central pair depends on. why_the_obvious_check_fails
+    # and told_apart_by already get the same treatment above; these two did not.
+    assert len(failure.what_happens) > 20, failure.name
+    assert len(failure.looks_like) > 20, failure.name
+    assert failure.presents_as
 
 
 def test_the_settle_predicates_wait_for_the_state_each_claim_is_about() -> None:
