@@ -45,6 +45,24 @@
     font: 16px/1.65 ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
   main { max-width: 46rem; margin: 0 auto; }
+  /* THE EVIDENCE BREAKS OUT WIDER THAN THE ARGUMENT, and that asymmetry is deliberate.
+     Prose wants a short measure, about 46rem, because a long line is hard to track back to the
+     start of the next one. Captured output wants whatever width it really is.
+
+     MEASURED BEFORE CHANGING ANYTHING. Nine of the sixteen transcripts are wider than the
+     roughly 90 columns that fit here, and they are wide for two different reasons. QUARRYZ's
+     longest line is an ordinary English sentence that was simply never wrapped, and that is a
+     capture-side problem. QUIDZ at 169 columns is a real log record and QUOTEZ at 142 is one
+     JSON bar per line, and NEITHER may be narrowed: truncating removes evidence and wrapping
+     stops a record being a record, while the property this whole page rests on is that the
+     committed artefact and the rendered page are the same bytes.
+
+     So the page gives the data the room instead. The block still scrolls when it must, and it
+     is keyboard reachable with a visible focus ring, so needing to scroll is not a dead end. */
+  pre, .scroller {
+    width: min(64rem, calc(100vw - 3rem));
+    margin-left: calc(50% - min(32rem, calc(50vw - 1.5rem)));
+  }
   h1 { font-size: 2.25rem; letter-spacing: -0.02em; margin: 0 0 .35rem; }
   .blurb { color: var(--muted); margin: 0 0 2rem; font-size: 1.05rem; }
   .claim { font-size: 1.2rem; line-height: 1.5; margin: 0 0 2rem; border-left: 3px solid var(--accent); padding-left: 1rem; }
@@ -57,12 +75,6 @@
        margin: 2.5rem 0 .5rem; font-weight: 600; }
   .cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem;
          color: var(--muted); margin: 0 0 .5rem; }
-  /* The one command name in the claim. Same stack as .cmd, tinted rather than boxed so the
-     pull quote still reads as one sentence. It exists because the claim arrived carrying two
-     grave accents around that name: Markdown moved into HTML, where it is drawn rather than
-     read. */
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-         font-size: .92em; color: var(--accent); }
   /* Wide output scrolls inside its own box. The page body never scrolls sideways. */
   /* KEYBOARD REACHABLE, because this block scrolls sideways on the cards whose output is wide
      and a scroll container that only a mouse can reach is evidence the reader cannot get to.
@@ -91,7 +103,7 @@
   <h1>QUAYZ</h1>
   <p class="blurb">telling a crash loop from an OOMKill, and naming the failure that no single field finds.</p>
 
-  <p class="claim">A crash loop and a container the kernel killed for memory are the same thing in <code>kubectl get pods</code>, and the remedy for one is not the remedy for the other. Four failures are produced against a cluster the test run creates and destroys, each read with six instruments, and the resulting matrix is what the taxonomy is checked against: three of its entries were wrong until they were joined to it, every one in the direction that flattered the repository.</p>
+  <p class="claim">A crash loop and a container the kernel killed for memory are the same thing in <code>kubectl get pods</code>, and the remedy for one is not the remedy for the other. Five failures are produced against a cluster the test run creates and destroys, each read with six instruments, and the resulting matrix is what the taxonomy is checked against: three of its entries were wrong until they were joined to it, every one in the direction that flattered the repository.</p>
 
   <dl class="facts">
     <div><dt>Tests</dt><dd>148</dd></div>
